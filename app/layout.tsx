@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-import { Sora } from "next/font/google";
+import { Epilogue } from "next/font/google";
 
 import "./globals.css";
 
-const sora = Sora({
+const epilogue = Epilogue({
   subsets: ["latin"],
   display: "swap",
-  variable: "--font-sora",
-  weight: ["100", "200", "300", "400", "500", "600", "700", "800"],
+  variable: "--font-epilogue",
+  weight: ["100", "200", "300", "400", "500", "600", "700", "800", "900"],
 });
 
 export const metadata: Metadata = {
@@ -21,7 +21,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="de" className={sora.variable}>
+    <html lang="de" className={epilogue.variable}>
       <body className="font-sans">{children}</body>
     </html>
   );
