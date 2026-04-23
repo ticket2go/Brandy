@@ -96,17 +96,17 @@ export default function BrandManager() {
     <section className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6">
       <form
         onSubmit={handleSubmit}
-        className="flex flex-col gap-3 sm:flex-row sm:items-center"
+        className="flex flex-row items-center gap-3"
       >
         <label htmlFor="brand-name" className="sr-only">
-          Brand-Name
+          Brandname
         </label>
         <input
           id="brand-name"
           type="text"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="Brand-Name eingeben …"
+          placeholder="Brandname anlegen …"
           disabled={saving}
           className="flex-1 rounded-xl border border-black/15 bg-white px-4 py-3 text-base text-black placeholder:text-black/40 outline-none transition focus:border-black/60 focus:ring-2 focus:ring-black/10 disabled:opacity-60"
           autoComplete="off"
@@ -114,9 +114,48 @@ export default function BrandManager() {
         <button
           type="submit"
           disabled={!canSave}
-          className="rounded-xl bg-black px-5 py-3 text-base font-medium text-white transition enabled:hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={saving ? "Speichert" : "Brand anlegen"}
+          title="Brand anlegen"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-black text-white shadow-sm transition enabled:hover:bg-black/80 enabled:hover:scale-105 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {saving ? "Speichert …" : "Speichern"}
+          {saving ? (
+            <svg
+              className="h-5 w-5 animate-spin"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeOpacity="0.25"
+                strokeWidth="3"
+              />
+              <path
+                d="M22 12a10 10 0 0 1-10 10"
+                stroke="currentColor"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+            </svg>
+          ) : (
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M10 4v12M4 10h12"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+          )}
         </button>
       </form>
 
