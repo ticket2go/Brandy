@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import { slugify } from "@/lib/slugify";
 
 import BrandCard from "./BrandCard";
+import ConfirmDialog from "./ConfirmDialog";
 
 type Brand = {
   id: string;
@@ -18,6 +19,8 @@ export default function BrandManager() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Brand | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadBrands = useCallback(async () => {
     setLoading(true);
@@ -67,6 +70,26 @@ export default function BrandManager() {
     setSaving(false);
   };
 
+  const confirmDelete = async () => {
+    if (!pendingDelete || deleting) return;
+    setDeleting(true);
+    setError(null);
+
+    const { error: deleteError } = await supabase
+      .from("brands")
+      .delete()
+      .eq("id", pendingDelete.id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+    } else {
+      setBrands((prev) => prev.filter((b) => b.id !== pendingDelete.id));
+      setPendingDelete(null);
+    }
+
+    setDeleting(false);
+  };
+
   const canSave = name.trim().length > 0 && !saving;
 
   return (
@@ -112,11 +135,32 @@ export default function BrandManager() {
         brands.length > 0 && (
           <div className="flex flex-wrap gap-4">
             {brands.map((brand) => (
-              <BrandCard key={brand.id} name={brand.name} />
+              <BrandCard
+                key={brand.id}
+                name={brand.name}
+                onDelete={() => setPendingDelete(brand)}
+              />
             ))}
           </div>
         )
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Brand wirklich löschen?"
+        description={
+          pendingDelete
+            ? `„${pendingDelete.name}" wird dauerhaft entfernt. Diese Aktion kann nicht rückgängig gemacht werden.`
+            : undefined
+        }
+        confirmLabel="Löschen"
+        cancelLabel="Abbrechen"
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => {
+          if (!deleting) setPendingDelete(null);
+        }}
+      />
     </section>
   );
 }
