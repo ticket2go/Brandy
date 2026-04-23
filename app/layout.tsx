@@ -1,5 +1,14 @@
 import type { Metadata } from "next";
+import { Epilogue } from "next/font/google";
+
 import "./globals.css";
+
+const epilogue = Epilogue({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-epilogue",
+  weight: ["100", "200", "300", "400", "500", "600", "700", "800", "900"],
+});
 
 export const metadata: Metadata = {
   title: "Brandsystem",
@@ -12,7 +21,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="de">
+    <html lang="de" className={epilogue.variable}>
       <body className="font-sans">{children}</body>
     </html>
   );
