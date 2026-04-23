@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 
 import { supabase } from "@/lib/supabase/client";
 import { slugify } from "@/lib/slugify";
@@ -21,6 +27,11 @@ export default function BrandManager() {
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Brand | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const loadBrands = useCallback(async () => {
     setLoading(true);
@@ -43,6 +54,81 @@ export default function BrandManager() {
     loadBrands();
   }, [loadBrands]);
 
+  useEffect(() => {
+    if (!formOpen) return;
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !saving) closeForm();
+    };
+    window.addEventListener("keydown", handleKey);
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    let cancelled = false;
+    (async () => {
+      const gsap = (await import("gsap")).default;
+      if (cancelled || !overlayRef.current || !panelRef.current) return;
+      gsap.fromTo(
+        overlayRef.current,
+        { opacity: 0, backdropFilter: "blur(0px)" },
+        {
+          opacity: 1,
+          backdropFilter: "blur(18px)",
+          duration: 0.45,
+          ease: "power3.out",
+        }
+      );
+      gsap.fromTo(
+        panelRef.current,
+        { opacity: 0, y: 30, filter: "blur(16px)", scale: 0.98 },
+        {
+          opacity: 1,
+          y: 0,
+          filter: "blur(0px)",
+          scale: 1,
+          duration: 0.55,
+          ease: "power3.out",
+        }
+      );
+      inputRef.current?.focus();
+    })();
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = previousOverflow;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formOpen]);
+
+  const closeForm = async () => {
+    if (saving) return;
+    const gsap = (await import("gsap")).default;
+    if (!overlayRef.current || !panelRef.current) {
+      setFormOpen(false);
+      return;
+    }
+    gsap.to(panelRef.current, {
+      opacity: 0,
+      y: 20,
+      filter: "blur(12px)",
+      scale: 0.98,
+      duration: 0.3,
+      ease: "power2.in",
+    });
+    gsap.to(overlayRef.current, {
+      opacity: 0,
+      backdropFilter: "blur(0px)",
+      duration: 0.35,
+      ease: "power2.in",
+      onComplete: () => {
+        setFormOpen(false);
+        setName("");
+      },
+    });
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = name.trim();
@@ -62,12 +148,14 @@ export default function BrandManager() {
 
     if (insertError) {
       setError(insertError.message);
+      setSaving(false);
     } else if (data) {
       setBrands((prev) => [...prev, data]);
-      setName("");
+      setSaving(false);
+      closeForm();
+    } else {
+      setSaving(false);
     }
-
-    setSaving(false);
   };
 
   const confirmDelete = async () => {
@@ -93,95 +181,116 @@ export default function BrandManager() {
   const canSave = name.trim().length > 0 && !saving;
 
   return (
-    <section className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6">
-      <form
-        onSubmit={handleSubmit}
-        className="flex flex-row items-center gap-3"
+    <>
+      <button
+        type="button"
+        onClick={() => setFormOpen(true)}
+        aria-label="Neue Brand anlegen"
+        title="Neue Brand anlegen"
+        className="fixed left-6 top-6 z-40 flex h-24 w-24 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
       >
-        <label htmlFor="brand-name" className="sr-only">
-          Brandname
-        </label>
-        <input
-          id="brand-name"
-          type="text"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Brandname anlegen …"
-          disabled={saving}
-          className="flex-1 rounded-xl border border-black/15 bg-white px-4 py-3 text-base text-black placeholder:text-black/40 outline-none transition focus:border-black/60 focus:ring-2 focus:ring-black/10 disabled:opacity-60"
-          autoComplete="off"
-        />
-        <button
-          type="submit"
-          disabled={!canSave}
-          aria-label={saving ? "Speichert" : "Brand anlegen"}
-          title="Brand anlegen"
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-black text-white shadow-sm transition enabled:hover:bg-black/80 enabled:hover:scale-105 disabled:cursor-not-allowed disabled:opacity-40"
+        <svg
+          width="40"
+          height="40"
+          viewBox="0 0 20 20"
+          fill="none"
+          aria-hidden="true"
         >
-          {saving ? (
-            <svg
-              className="h-5 w-5 animate-spin"
-              viewBox="0 0 24 24"
-              fill="none"
-              aria-hidden="true"
-            >
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeOpacity="0.25"
-                strokeWidth="3"
-              />
-              <path
-                d="M22 12a10 10 0 0 1-10 10"
-                stroke="currentColor"
-                strokeWidth="3"
-                strokeLinecap="round"
-              />
-            </svg>
-          ) : (
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 20 20"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M10 4v12M4 10h12"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-          )}
-        </button>
-      </form>
+          <path
+            d="M10 4v12M4 10h12"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+          />
+        </svg>
+      </button>
 
-      {error && (
-        <p
-          role="alert"
-          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+      <section className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6">
+        {error && !formOpen && (
+          <p
+            role="alert"
+            className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          >
+            Fehler: {error}
+          </p>
+        )}
+
+        {loading ? (
+          <p className="text-sm text-black/50">Lade Brands …</p>
+        ) : (
+          brands.length > 0 && (
+            <div className="flex flex-wrap gap-4">
+              {brands.map((brand) => (
+                <BrandCard
+                  key={brand.id}
+                  name={brand.name}
+                  onDelete={() => setPendingDelete(brand)}
+                />
+              ))}
+            </div>
+          )
+        )}
+      </section>
+
+      {formOpen && (
+        <div
+          ref={overlayRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Neue Brand anlegen"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6"
+          style={{ backdropFilter: "blur(18px)" }}
+          onClick={() => closeForm()}
         >
-          Fehler: {error}
-        </p>
-      )}
-
-      {loading ? (
-        <p className="text-sm text-black/50">Lade Brands …</p>
-      ) : (
-        brands.length > 0 && (
-          <div className="flex flex-wrap gap-4">
-            {brands.map((brand) => (
-              <BrandCard
-                key={brand.id}
-                name={brand.name}
-                onDelete={() => setPendingDelete(brand)}
+          <div
+            ref={panelRef}
+            className="w-full max-w-4xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+              <label htmlFor="brand-name-overlay" className="sr-only">
+                Brandname
+              </label>
+              <input
+                ref={inputRef}
+                id="brand-name-overlay"
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Brandname …"
+                disabled={saving}
+                autoComplete="off"
+                className="w-full rounded-3xl border-0 bg-white px-10 py-10 font-semibold tracking-tight text-black placeholder:text-black/25 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
+                style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
               />
-            ))}
+              <div className="flex items-center justify-between gap-4 px-2">
+                <button
+                  type="button"
+                  onClick={() => closeForm()}
+                  disabled={saving}
+                  className="text-base font-medium text-white/80 transition hover:text-white disabled:opacity-50"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="submit"
+                  disabled={!canSave}
+                  className="rounded-full bg-white px-8 py-4 text-lg font-semibold text-black transition enabled:hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {saving ? "Speichert …" : "Anlegen"}
+                </button>
+              </div>
+              {error && (
+                <p
+                  role="alert"
+                  className="rounded-xl bg-red-500/20 px-4 py-3 text-sm text-red-100"
+                >
+                  Fehler: {error}
+                </p>
+              )}
+            </form>
           </div>
-        )
+        </div>
       )}
 
       <ConfirmDialog
@@ -200,6 +309,6 @@ export default function BrandManager() {
           if (!deleting) setPendingDelete(null);
         }}
       />
-    </section>
+    </>
   );
 }
