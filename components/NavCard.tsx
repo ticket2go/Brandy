@@ -26,6 +26,7 @@ export default function NavCard() {
   const [open, setOpen] = useState(true);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
+  const labelRef = useRef<HTMLSpanElement | null>(null);
   const isFirstRender = useRef(true);
 
   useEffect(() => {
@@ -45,6 +46,16 @@ export default function NavCard() {
           duration: 0.45,
           ease: "power3.out",
         });
+        if (labelRef.current) {
+          gsap.to(labelRef.current, {
+            opacity: 0,
+            x: -4,
+            filter: "blur(8px)",
+            duration: 0.3,
+            ease: "power2.in",
+            pointerEvents: "none",
+          });
+        }
         gsap.fromTo(
           items,
           {
@@ -79,6 +90,17 @@ export default function NavCard() {
           ease: "power3.inOut",
           delay: 0.15,
         });
+        if (labelRef.current) {
+          gsap.to(labelRef.current, {
+            opacity: 1,
+            x: 0,
+            filter: "blur(0px)",
+            duration: 0.45,
+            ease: "power3.out",
+            delay: 0.25,
+            pointerEvents: "auto",
+          });
+        }
       }
     };
 
@@ -95,11 +117,20 @@ export default function NavCard() {
       className="fixed right-6 top-6 z-50 w-[200px] select-none rounded-2xl bg-neutral-950 p-5 text-neutral-200 shadow-2xl shadow-black/20 ring-1 ring-white/5"
     >
       <div className="flex items-center justify-between">
-        <span
-          aria-hidden
-          className="h-2 w-2 rounded-full bg-white"
-          title="Verfügbar"
-        />
+        <div className="flex items-center gap-2">
+          <span
+            aria-hidden
+            className="h-2 w-2 rounded-full bg-white"
+            title="Verfügbar"
+          />
+          <span
+            ref={labelRef}
+            className="text-[11px] font-medium tracking-tight text-white/80"
+            style={{ opacity: open ? 0 : 1 }}
+          >
+            BS.Feinrot
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
