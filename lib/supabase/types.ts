@@ -7,6 +7,9 @@ export type Json =
   | Json[];
 
 export interface Database {
+  __InternalSupabase: {
+    PostgrestVersion: "12";
+  };
   public: {
     Tables: {
       profiles: {
@@ -37,11 +40,12 @@ export interface Database {
           created_at?: string;
           updated_at?: string;
         };
+        Relationships: [];
       };
       brands: {
         Row: {
           id: string;
-          owner_id: string;
+          owner_id: string | null;
           name: string;
           slug: string;
           description: string | null;
@@ -53,7 +57,7 @@ export interface Database {
         };
         Insert: {
           id?: string;
-          owner_id: string;
+          owner_id?: string | null;
           name: string;
           slug: string;
           description?: string | null;
@@ -65,7 +69,7 @@ export interface Database {
         };
         Update: {
           id?: string;
-          owner_id?: string;
+          owner_id?: string | null;
           name?: string;
           slug?: string;
           description?: string | null;
@@ -75,6 +79,7 @@ export interface Database {
           created_at?: string;
           updated_at?: string;
         };
+        Relationships: [];
       };
       assets: {
         Row: {
@@ -113,6 +118,7 @@ export interface Database {
           created_at?: string;
           updated_at?: string;
         };
+        Relationships: [];
       };
     };
     Views: Record<string, never>;
