@@ -71,10 +71,15 @@ export default function BrandManager() {
       if (cancelled || !overlayRef.current || !panelRef.current) return;
       gsap.fromTo(
         overlayRef.current,
-        { opacity: 0, backdropFilter: "blur(0px)" },
+        {
+          opacity: 0,
+          backdropFilter: "blur(0px)",
+          WebkitBackdropFilter: "blur(0px)",
+        },
         {
           opacity: 1,
-          backdropFilter: "blur(18px)",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
           duration: 0.45,
           ease: "power3.out",
         }
@@ -120,6 +125,7 @@ export default function BrandManager() {
     gsap.to(overlayRef.current, {
       opacity: 0,
       backdropFilter: "blur(0px)",
+      WebkitBackdropFilter: "blur(0px)",
       duration: 0.35,
       ease: "power2.in",
       onComplete: () => {
@@ -238,44 +244,39 @@ export default function BrandManager() {
           role="dialog"
           aria-modal="true"
           aria-label="Neue Brand anlegen"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6"
-          style={{ backdropFilter: "blur(18px)" }}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6"
+          style={{
+            backdropFilter: "blur(24px)",
+            WebkitBackdropFilter: "blur(24px)",
+          }}
           onClick={() => closeForm()}
         >
           <div
             ref={panelRef}
-            className="w-full max-w-4xl"
+            className="w-full max-w-5xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <label htmlFor="brand-name-overlay" className="sr-only">
                 Brandname
               </label>
-              <input
-                ref={inputRef}
-                id="brand-name-overlay"
-                type="text"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Brandname …"
-                disabled={saving}
-                autoComplete="off"
-                className="w-full rounded-3xl border-0 bg-white px-10 py-10 font-semibold tracking-tight text-black placeholder:text-black/25 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
-                style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
-              />
-              <div className="flex items-center justify-between gap-4 px-2">
-                <button
-                  type="button"
-                  onClick={() => closeForm()}
+              <div className="flex items-end gap-6 border-b-2 border-white/70 px-2 pb-4">
+                <input
+                  ref={inputRef}
+                  id="brand-name-overlay"
+                  type="text"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Brandname …"
                   disabled={saving}
-                  className="text-base font-medium text-white/80 transition hover:text-white disabled:opacity-50"
-                >
-                  Abbrechen
-                </button>
+                  autoComplete="off"
+                  className="min-w-0 flex-1 border-0 bg-transparent font-semibold tracking-tight text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
+                  style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
+                />
                 <button
                   type="submit"
                   disabled={!canSave}
-                  className="rounded-full bg-white px-8 py-4 text-lg font-semibold text-black transition enabled:hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="mb-2 shrink-0 rounded-full bg-white px-8 py-4 text-lg font-semibold text-black transition enabled:hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {saving ? "Speichert …" : "Anlegen"}
                 </button>
