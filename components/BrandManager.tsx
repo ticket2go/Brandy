@@ -19,6 +19,7 @@ type Brand = {
   name: string;
   slug: string;
   logo_url: string | null;
+  colors: string[];
 };
 
 export default function BrandManager() {
@@ -46,9 +47,40 @@ export default function BrandManager() {
     if (loadError) {
       setError(loadError.message);
       setBrands([]);
-    } else {
-      setBrands(data ?? []);
+      setLoading(false);
+      return;
     }
+
+    const baseBrands = (data ?? []) as Array<Omit<Brand, "colors">>;
+    const brandIds = baseBrands.map((b) => b.id);
+
+    let colorsByBrand = new Map<string, string[]>();
+    if (brandIds.length > 0) {
+      const { data: colorRows } = await supabase
+        .from("brand_colors")
+        .select("brand_id, hex, position")
+        .in("brand_id", brandIds)
+        .order("position", { ascending: true });
+
+      if (colorRows) {
+        colorsByBrand = (colorRows as Array<{
+          brand_id: string;
+          hex: string;
+        }>).reduce((acc, row) => {
+          const list = acc.get(row.brand_id) ?? [];
+          if (list.length < 3) list.push(row.hex);
+          acc.set(row.brand_id, list);
+          return acc;
+        }, new Map<string, string[]>());
+      }
+    }
+
+    setBrands(
+      baseBrands.map((b) => ({
+        ...b,
+        colors: colorsByBrand.get(b.id) ?? [],
+      }))
+    );
     setLoading(false);
   }, []);
 
@@ -158,7 +190,7 @@ export default function BrandManager() {
       setError(insertError.message);
       setSaving(false);
     } else if (data) {
-      setBrands((prev) => [...prev, data]);
+      setBrands((prev) => [...prev, { ...data, colors: [] }]);
       setSaving(false);
       closeForm();
     } else {
@@ -237,6 +269,7 @@ export default function BrandManager() {
                   name={brand.name}
                   slug={brand.slug}
                   logoUrl={brand.logo_url}
+                  colors={brand.colors}
                   onDelete={() => setPendingDelete(brand)}
                 />
               ))}
