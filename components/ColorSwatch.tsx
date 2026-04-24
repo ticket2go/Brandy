@@ -9,25 +9,6 @@ export type ColorSwatchData = {
   codeLabel?: string;
 };
 
-function renderCmyk(code: string) {
-  const parts = code.split(/\s+/).filter(Boolean);
-  return (
-    <span className="inline-flex flex-wrap items-baseline gap-x-1 gap-y-0">
-      {parts.map((part, index) => {
-        const match = part.match(/^([CMYK])(\d+)$/);
-        if (match) {
-          return (
-            <span key={`${part}-${index}`} className="inline-flex items-baseline">
-              <span className="font-bold text-black">{match[1]}</span>
-              <span>{match[2]}</span>
-            </span>
-          );
-        }
-        return <span key={`${part}-${index}`}>{part}</span>;
-      })}
-    </span>
-  );
-}
 
 type ColorSwatchProps = ColorSwatchData & {
   onHoverChange?: (hex: string | null) => void;
@@ -127,7 +108,7 @@ export default function ColorSwatch({
           </p>
         )}
         <p className="font-mono text-[11px] leading-tight text-black/70">
-          {codeLabel === "CMYK" ? renderCmyk(code) : code}
+          {code}
         </p>
       </div>
     </article>
