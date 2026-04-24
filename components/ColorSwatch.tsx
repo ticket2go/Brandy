@@ -73,7 +73,7 @@ export default function ColorSwatch({
             dark ? "text-white" : "text-black"
           }`}
         >
-          bearbeiten
+          Bearbeiten
         </button>
 
         <button

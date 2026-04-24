@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 type NavItem = {
@@ -19,7 +20,13 @@ const resourceItems: NavItem[] = [
 ];
 
 export default function NavCard() {
-  const [open, setOpen] = useState(true);
+  const pathname = usePathname();
+  const isHome = pathname === "/";
+  const [open, setOpen] = useState(isHome);
+
+  useEffect(() => {
+    setOpen(isHome);
+  }, [isHome]);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
   const labelRef = useRef<HTMLSpanElement | null>(null);
