@@ -50,14 +50,14 @@ export default function BrandCard({
   }
   const glowBackground = glowLayers.join(", ");
 
-  const textMain = "text-black";
-  const textMuted = "text-black/50";
+  const textMain = "text-white";
+  const textMuted = "text-white/50";
   const deleteBtnClass =
-    "bg-black/5 text-black/50 hover:bg-red-500/10 hover:text-red-600 focus:ring-black/20";
-  const focusRingClass = "focus-visible:ring-black/40";
+    "bg-white/10 text-white/60 hover:bg-red-500/20 hover:text-red-300 focus:ring-white/20";
+  const focusRingClass = "focus-visible:ring-white/40";
 
   return (
-    <article className="group relative flex h-40 w-64 shrink-0 flex-col justify-between overflow-hidden rounded-2xl border border-black/10 bg-white p-5 transition-transform hover:-translate-y-0.5">
+    <article className="group relative flex h-40 w-64 shrink-0 flex-col justify-between overflow-hidden rounded-2xl bg-black p-5 transition-transform hover:-translate-y-0.5">
       {glowBackground && (
         <div
           aria-hidden
@@ -76,7 +76,7 @@ export default function BrandCard({
         <img
           src={logoSrc}
           alt={`${name} Logo`}
-          className="pointer-events-none absolute left-3 top-3 z-[2] h-9 w-9 rounded-full border border-black/10 bg-white object-cover"
+          className="pointer-events-none absolute left-3 top-3 z-[2] h-9 w-9 rounded-full bg-white object-cover"
         />
       )}
 
@@ -124,22 +124,6 @@ export default function BrandCard({
             Brand
           </span>
         </div>
-
-        {swatches.length > 0 && (
-          <div
-            aria-label="Brand-Farben"
-            className="flex shrink-0 items-center gap-1.5"
-          >
-            {swatches.map((hex, idx) => (
-              <span
-                key={`${hex}-${idx}`}
-                className="h-3 w-3 rounded-full"
-                style={{ backgroundColor: hex }}
-                title={hex}
-              />
-            ))}
-          </div>
-        )}
       </footer>
     </article>
   );
