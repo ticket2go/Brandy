@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 type ModalProps = {
   open: boolean;
@@ -50,8 +51,9 @@ export default function Modal({
   }, [rendered, onClose]);
 
   if (!rendered) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
+  return createPortal(
     <div
       ref={overlayRef}
       role="dialog"
@@ -84,6 +86,7 @@ export default function Modal({
         )}
         <div className="mt-5">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
