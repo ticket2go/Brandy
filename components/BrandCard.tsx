@@ -36,15 +36,15 @@ export default function BrandCard({
   const glowLayers: string[] = [];
   if (swatches.length > 0) {
     const offsets = [
-      { x: "100%", y: "100%", alpha: "47" }, // ~28 %
-      { x: "85%", y: "115%", alpha: "33" }, // ~20 %
-      { x: "115%", y: "85%", alpha: "33" }, // ~20 %
+      { x: "100%", y: "100%", alpha: "80", fade: "70%" }, // ~50 %
+      { x: "85%", y: "115%", alpha: "66", fade: "65%" }, // ~40 %
+      { x: "115%", y: "85%", alpha: "66", fade: "65%" }, // ~40 %
     ];
     for (let i = 0; i < swatches.length; i += 1) {
       const hex = swatches[i];
       const off = offsets[i] ?? offsets[0];
       glowLayers.push(
-        `radial-gradient(circle at ${off.x} ${off.y}, ${hex}${off.alpha} 0%, ${hex}00 60%)`
+        `radial-gradient(circle at ${off.x} ${off.y}, ${hex}${off.alpha} 0%, ${hex}00 ${off.fade})`
       );
     }
   }
@@ -134,10 +134,7 @@ export default function BrandCard({
               <span
                 key={`${hex}-${idx}`}
                 className="h-3 w-3 rounded-full"
-                style={{
-                  backgroundColor: hex,
-                  boxShadow: `0 0 8px ${hex}66`,
-                }}
+                style={{ backgroundColor: hex }}
                 title={hex}
               />
             ))}
