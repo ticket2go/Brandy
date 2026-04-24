@@ -82,6 +82,8 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
   const [deletingCategory, setDeletingCategory] = useState(false);
 
   const [importOpen, setImportOpen] = useState(false);
+  const [swapping, setSwapping] = useState(false);
+  const [swapMessage, setSwapMessage] = useState<string | null>(null);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<"add" | "edit">("add");
@@ -473,6 +475,51 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     setValues((prev) => [...prev, ...insertedValues]);
   };
 
+  const handleSwapPrintToDigital = async () => {
+    if (swapping) return;
+    setSwapping(true);
+    setSwapMessage(null);
+    setError(null);
+    try {
+      const printColors = colors
+        .filter((c) => c.group === "print")
+        .sort((a, b) => a.position - b.position);
+
+      if (printColors.length === 0) {
+        setSwapMessage("Keine Print-Farben vorhanden.");
+        return;
+      }
+
+      const existingDigitalHex = new Set(
+        colors
+          .filter((c) => c.group === "digital")
+          .map((c) => c.hex.toUpperCase())
+      );
+      const candidates = printColors.filter(
+        (c) => !existingDigitalHex.has(c.hex.toUpperCase())
+      );
+
+      if (candidates.length === 0) {
+        setSwapMessage("Alle Print-Farben sind bereits in Digital vorhanden.");
+        return;
+      }
+
+      const items: ImportColorItem[] = candidates.map((c) => ({
+        hex: c.hex,
+        name: c.name,
+      }));
+
+      await handleImportFromUrl(items);
+      setSwapMessage(
+        `${candidates.length} Farbe${candidates.length === 1 ? "" : "n"} uebernommen.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSwapping(false);
+    }
+  };
+
   const editorCategories: EditorCategory[] = useMemo(() => {
     return categories
       .filter((c) => c.group === editorGroup)
@@ -649,50 +696,88 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
                 {!loading && (
                   <AddColorSwatch onAdd={() => openAddColor(group)} />
                 )}
-                {!loading && group === "digital" && (
+                {loading && (
+                  <p className="text-sm text-black/50">Lade Farben …</p>
+                )}
+              </div>
+
+              {!loading && group === "digital" && (
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setImportOpen(true)}
                     aria-label="Farben aus Website importieren"
                     title="Farben aus Website importieren"
-                    className="group relative flex w-44 shrink-0 flex-col overflow-hidden rounded-2xl border border-dashed border-black/15 bg-black/[0.02] text-black/40 shadow-none ring-0 transition-all duration-300 hover:-translate-y-1 hover:border-black/30 hover:bg-black/[0.04] hover:text-black/70 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30"
+                    className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white transition hover:bg-black/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/40"
                   >
-                    <div className="flex h-36 w-full items-center justify-center bg-black/[0.04]">
-                      <span
-                        aria-hidden
-                        className="flex h-10 w-10 items-center justify-center rounded-full border border-current text-current transition-transform duration-300 group-hover:scale-105"
-                      >
-                        <svg
-                          width="18"
-                          height="18"
-                          viewBox="0 0 20 20"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M8.5 11.5l3-3M7 13a3 3 0 010-4.2l2-2a3 3 0 014.2 4.2l-1 1M13 7a3 3 0 010 4.2l-2 2a3 3 0 01-4.2-4.2l1-1"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-1 px-3 py-3 text-left">
-                      <h4 className="text-sm font-bold uppercase tracking-tight text-black/40 group-hover:text-black/70">
-                        Aus URL
-                      </h4>
-                      <p className="text-[10px] font-medium uppercase tracking-widest text-black/30">
-                        Website importieren
-                      </p>
-                    </div>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M10.5 1.5l.55 1.45L12.5 3.5l-1.45.55L10.5 5.5l-.55-1.45L8.5 3.5l1.45-.55L10.5 1.5z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M13.5 6.5l.4 1.1 1.1.4-1.1.4-.4 1.1-.4-1.1-1.1-.4 1.1-.4.4-1.1z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M3.5 4.5l.35.95.95.35-.95.35-.35.95-.35-.95L2.2 5.8l.95-.35L3.5 4.5z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M8.2 6.3l1.5 1.5M2.5 14.5l6.3-6.3a1 1 0 011.4 0l.6.6a1 1 0 010 1.4l-6.3 6.3"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    Aus URL
                   </button>
-                )}
-                {loading && (
-                  <p className="text-sm text-black/50">Lade Farben …</p>
-                )}
-              </div>
+                  <button
+                    type="button"
+                    onClick={handleSwapPrintToDigital}
+                    disabled={swapping}
+                    aria-label="Print-Farben in Digital konvertieren"
+                    title="Print-Farben in Digital konvertieren"
+                    className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white transition hover:bg-black/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/40 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M3 5h8.5M8.5 2L12 5 8.5 8"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M13 11H4.5M7.5 14L4 11l3.5-3"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    {swapping ? "Swap …" : "Swap"}
+                  </button>
+                  {swapMessage && (
+                    <span className="text-[11px] uppercase tracking-widest text-black/50">
+                      {swapMessage}
+                    </span>
+                  )}
+                </div>
+              )}
             </section>
           );
         })}
