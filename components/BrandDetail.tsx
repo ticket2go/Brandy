@@ -47,6 +47,10 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("logokit");
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadBrand = useCallback(async () => {
     setLoading(true);
@@ -73,6 +77,51 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
   useEffect(() => {
     loadBrand();
   }, [loadBrand]);
+
+  useEffect(() => {
+    if (editingName && nameInputRef.current) {
+      nameInputRef.current.focus();
+      nameInputRef.current.select();
+    }
+  }, [editingName]);
+
+  const startEditName = () => {
+    if (!brand) return;
+    setNameDraft(brand.name);
+    setEditingName(true);
+  };
+
+  const cancelEditName = () => {
+    if (savingName) return;
+    setEditingName(false);
+    setNameDraft("");
+  };
+
+  const commitEditName = async () => {
+    if (!brand || savingName) return;
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === brand.name) {
+      cancelEditName();
+      return;
+    }
+    setSavingName(true);
+    setError(null);
+    const { data, error: updateError } = await supabase
+      .from("brands")
+      .update({ name: trimmed })
+      .eq("id", brand.id)
+      .select("id, name, slug, logo_url")
+      .single();
+    if (updateError) {
+      setError(updateError.message);
+      setSavingName(false);
+      return;
+    }
+    if (data) setBrand(data);
+    setSavingName(false);
+    setEditingName(false);
+    setNameDraft("");
+  };
 
   const logoSrc = useMemo(() => {
     if (!brand?.logo_url) return null;
@@ -176,15 +225,69 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           <span className="text-black/70">{brand.name}</span>
         </nav>
         <div className="flex items-end justify-between gap-6">
-          <h1
-            className="m-0 font-bold text-black"
-            style={{
-              fontSize: "clamp(2rem, 6vw, 4rem)",
-              letterSpacing: "-0.02em",
-            }}
-          >
-            {brand.name}
-          </h1>
+          <div className="flex min-w-0 items-start gap-2">
+            {editingName ? (
+              <input
+                ref={nameInputRef}
+                type="text"
+                value={nameDraft}
+                onChange={(event) => setNameDraft(event.target.value)}
+                onBlur={commitEditName}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitEditName();
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelEditName();
+                  }
+                }}
+                disabled={savingName}
+                aria-label="Brand-Name bearbeiten"
+                className="m-0 min-w-0 rounded-md border border-black/15 bg-white px-2 py-1 font-bold text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10 disabled:opacity-60"
+                style={{
+                  fontSize: "clamp(2rem, 6vw, 4rem)",
+                  letterSpacing: "-0.02em",
+                  lineHeight: 1.05,
+                }}
+              />
+            ) : (
+              <>
+                <h1
+                  className="m-0 font-bold text-black"
+                  style={{
+                    fontSize: "clamp(2rem, 6vw, 4rem)",
+                    letterSpacing: "-0.02em",
+                  }}
+                >
+                  {brand.name}
+                </h1>
+                <button
+                  type="button"
+                  onClick={startEditName}
+                  aria-label="Brand-Name bearbeiten"
+                  title="Namen bearbeiten"
+                  className="mt-2 flex h-7 w-7 items-center justify-center rounded-md text-black/30 transition hover:bg-black/5 hover:text-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 14 14"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
+                      stroke="currentColor"
+                      strokeWidth="1.25"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </>
+            )}
+          </div>
           <div className="flex items-center gap-4">
             {logoSrc && (
               // eslint-disable-next-line @next/next/no-img-element
