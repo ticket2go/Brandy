@@ -6,10 +6,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 
 import {
-  generateIdml,
-  suggestIdmlFilename,
+  generateIdmlPackage,
+  suggestIdmlPackageFilename,
   type IdmlColorInput,
+  type IdmlPackageFont,
   type IdmlPageSize,
+  type IdmlTypographyRole,
 } from "@/lib/generateIdml";
 
 import BrandRoles from "./BrandRoles";
@@ -196,19 +198,42 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
       setExportingIdml(true);
       setError(null);
       try {
-        const { data, error: loadError } = await supabase
-          .from("brand_colors")
-          .select("id, group, name, hex, position")
-          .eq("brand_id", brand.id)
-          .order("position", { ascending: true })
-          .order("created_at", { ascending: true });
+        const [colorsRes, fontsRes, fontFilesRes] = await Promise.all([
+          supabase
+            .from("brand_colors")
+            .select("id, group, name, hex, position")
+            .eq("brand_id", brand.id)
+            .order("position", { ascending: true })
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("brand_fonts")
+            .select(
+              "id, family, source, roles, position, created_at"
+            )
+            .eq("brand_id", brand.id)
+            .order("position", { ascending: true })
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("brand_font_files")
+            .select(
+              "id, font_id, variant, weight, italic, format, storage_path"
+            ),
+        ]);
 
-        if (loadError) {
-          setError(loadError.message);
+        if (colorsRes.error) {
+          setError(colorsRes.error.message);
+          return;
+        }
+        if (fontsRes.error) {
+          setError(fontsRes.error.message);
+          return;
+        }
+        if (fontFilesRes.error) {
+          setError(fontFilesRes.error.message);
           return;
         }
 
-        const rows = (data ?? []) as Array<{
+        const colorRows = (colorsRes.data ?? []) as Array<{
           id: string;
           group: "print" | "digital";
           name: string;
@@ -216,29 +241,216 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           position: number;
         }>;
 
-        if (rows.length === 0) {
+        if (colorRows.length === 0) {
           setError(
             "Keine Farben hinterlegt – lege zuerst Print- oder Digital-Farben an."
           );
           return;
         }
 
-        const colors: IdmlColorInput[] = rows.map((row) => ({
+        const colors: IdmlColorInput[] = colorRows.map((row) => ({
           name: row.name,
           hex: row.hex,
           group: row.group,
         }));
 
-        const blob = await generateIdml({
+        const fontRows = (fontsRes.data ?? []) as Array<{
+          id: string;
+          family: string;
+          source: "google" | "custom";
+          roles: string[] | null;
+          position: number;
+        }>;
+        const fontFileRows = (fontFilesRes.data ?? []) as Array<{
+          id: string;
+          font_id: string;
+          variant: string;
+          weight: number;
+          italic: boolean;
+          format: string;
+          storage_path: string;
+        }>;
+
+        // Rollen-Reihenfolge wie im Panel, damit Headline zuerst und
+        // Monospace zuletzt ausgegeben wird.
+        const ROLE_ORDER = [
+          "headline",
+          "subline",
+          "overline",
+          "copy",
+          "caption",
+          "quote",
+          "monospace",
+        ];
+
+        type RoleMeta = {
+          key: string;
+          label: string;
+          sample: string;
+          pointSize: number;
+          weight?: number;
+          italic?: boolean;
+          uppercase?: boolean;
+          letterSpacing?: number;
+        };
+        const roleDefaults: Record<string, RoleMeta> = {
+          headline: {
+            key: "headline",
+            label: "Headline",
+            sample: "Headline – The quick brown fox",
+            pointSize: 34,
+            weight: 700,
+          },
+          subline: {
+            key: "subline",
+            label: "Subline",
+            sample: "Subline – jumps over the lazy dog",
+            pointSize: 22,
+            weight: 600,
+          },
+          overline: {
+            key: "overline",
+            label: "Overline",
+            sample: "Overline",
+            pointSize: 10,
+            weight: 600,
+            uppercase: true,
+            letterSpacing: 200,
+          },
+          copy: {
+            key: "copy",
+            label: "Copy",
+            sample:
+              "Copy – Der schnelle braune Fuchs springt ueber den faulen Hund.",
+            pointSize: 11,
+            weight: 400,
+          },
+          caption: {
+            key: "caption",
+            label: "Caption",
+            sample: "Caption – Beschreibung oder Bildunterschrift.",
+            pointSize: 9,
+            weight: 400,
+          },
+          quote: {
+            key: "quote",
+            label: "Quote",
+            sample: "\u201COutstanding work is never an accident.\u201D",
+            pointSize: 14,
+            weight: 400,
+            italic: true,
+          },
+          monospace: {
+            key: "monospace",
+            label: "Monospace",
+            sample: "const hello = \"world\";",
+            pointSize: 10,
+            weight: 400,
+          },
+        };
+
+        type TypographyAssignment = {
+          role: RoleMeta;
+          family: string;
+          fontId: string;
+        };
+        const typographyAssignments: TypographyAssignment[] = [];
+        for (const roleKey of ROLE_ORDER) {
+          const match = fontRows.find((f) =>
+            Array.isArray(f.roles) ? f.roles.includes(roleKey) : false
+          );
+          if (!match) continue;
+          const meta = roleDefaults[roleKey];
+          if (!meta) continue;
+          typographyAssignments.push({
+            role: meta,
+            family: match.family,
+            fontId: match.id,
+          });
+        }
+
+        const typography: IdmlTypographyRole[] = typographyAssignments.map(
+          (entry) => ({
+            key: entry.role.key,
+            label: entry.role.label,
+            family: entry.family,
+            sampleText: entry.role.sample,
+            pointSize: entry.role.pointSize,
+            weight: entry.role.weight,
+            italic: entry.role.italic,
+            uppercase: entry.role.uppercase,
+            letterSpacing: entry.role.letterSpacing,
+          })
+        );
+
+        // Font-Dateien zusammentragen: alle Schriftfamilien, die per Rolle
+        // verwendet werden. Fuer jede Familie ALLE hinterlegten Dateien
+        // beilegen - allerdings OHNE woff (weder woff noch woff2 sind fuer
+        // InDesign relevant; ttf/otf werden bevorzugt).
+        const usedFontIds = new Set<string>(
+          typographyAssignments.map((t) => t.fontId)
+        );
+        // Zusaetzlich die Fonts ohne Rolle, aber mit Dateien, nicht mitnehmen,
+        // um das Paket klein zu halten. Falls der User das ZIP trotzdem als
+        // "Alle Fonts" moechte, koennten wir spaeter einen Schalter einbauen.
+
+        const fontsForPackage: IdmlPackageFont[] = [];
+        for (const fontRow of fontRows) {
+          if (!usedFontIds.has(fontRow.id)) continue;
+          const files = fontFileRows.filter(
+            (f) => f.font_id === fontRow.id && f.format !== "woff" && f.format !== "woff2"
+          );
+          if (files.length === 0) continue;
+          const downloaded = await Promise.all(
+            files.map(async (file) => {
+              const { data } = supabase.storage
+                .from(STORAGE_BUCKET)
+                .getPublicUrl(file.storage_path);
+              const response = await fetch(data.publicUrl);
+              if (!response.ok) {
+                throw new Error(
+                  `Schriftdatei konnte nicht geladen werden (${response.status}).`
+                );
+              }
+              const buffer = await response.arrayBuffer();
+              const suffix = file.italic ? "Italic" : "";
+              const weightName =
+                file.weight === 400
+                  ? suffix
+                    ? ""
+                    : "Regular"
+                  : String(file.weight);
+              const baseName = [
+                fontRow.family.replace(/\s+/g, ""),
+                weightName,
+                suffix,
+              ]
+                .filter(Boolean)
+                .join("-");
+              return {
+                name: `${baseName || fontRow.family.replace(/\s+/g, "") + "-" + file.variant}.${file.format}`,
+                data: buffer,
+              };
+            })
+          );
+          fontsForPackage.push({
+            family: fontRow.family,
+            files: downloaded,
+          });
+        }
+
+        const blob = await generateIdmlPackage({
           brandName: brand.name,
           colors,
+          typography,
           pageSize,
+          fonts: fontsForPackage,
         });
 
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = suggestIdmlFilename(brand.name);
+        a.download = suggestIdmlPackageFilename(brand.name);
         document.body.appendChild(a);
         a.click();
         a.remove();

@@ -54,9 +54,25 @@ export function buildPageSizeFromMm(
   return { widthPt: Math.min(w, h), heightPt: Math.max(w, h) };
 }
 
+export type IdmlTypographyRole = {
+  key: string;
+  label: string;
+  family: string;
+  sampleText: string;
+  pointSize: number;
+  /** Beliebige Schreibweise: 400/700/regular/bold etc. rein informativ. */
+  weight?: number;
+  italic?: boolean;
+  uppercase?: boolean;
+  letterSpacing?: number; // in Promille, analog InDesign Tracking
+};
+
 export type GenerateIdmlOptions = {
   brandName: string;
   colors: IdmlColorInput[];
+  /** Optionale Typo-Rollen – werden als eigener Block ueber den Farben
+   *  platziert (Headline, Subline, Overline, Copy, ...). */
+  typography?: IdmlTypographyRole[];
   /** Seitenformat in Punkt. Default: A4 Hochformat. */
   pageSize?: IdmlPageSize;
 };
@@ -240,9 +256,24 @@ ${strokeStyles}
 </idPkg:Graphic>`;
 }
 
-function buildFontsXml(): string {
+function sanitizeFontFamily(family: string): string {
+  return family.replace(/[^\x20-\x7E]/g, "").trim() || "Unknown";
+}
+
+function buildFontsXml(families: string[] = []): string {
+  const unique = Array.from(new Set(families.map((f) => sanitizeFontFamily(f))))
+    .filter(Boolean);
+  const familyBlocks = unique
+    .map((family) => {
+      const regularSelf = `Font/${xmlEscape(family)}%3cRegular%3e`;
+      return `\t<FontFamily Self="FontFamily/${xmlEscape(family)}" Name="${xmlEscape(family)}">
+\t\t<Font Self="${regularSelf}" FontFamily="${xmlEscape(family)}" Name="${xmlEscape(family)} Regular" PostScriptName="${xmlEscape(family)}" Status="Installed" FontStyleName="Regular" FontType="OpenTypeTT" WritingScript="0"/>
+\t</FontFamily>`;
+    })
+    .join("\n");
   return `${XML_HEADER}
 <idPkg:Fonts ${IDPKG_NS} DOMVersion="${DOM_VERSION}">
+${familyBlocks}
 </idPkg:Fonts>`;
 }
 
@@ -414,6 +445,10 @@ type StoryParagraph = {
   pointSize: number;
   leading?: "Auto" | number;
   fillColor?: string; // Color/... self
+  appliedFont?: string; // Schriftfamilie
+  fontStyle?: string; // z.B. "Regular", "Bold", "Italic", "Bold Italic"
+  capitalization?: "Normal" | "AllCaps" | "SmallCaps";
+  tracking?: number; // InDesign Tracking (1/1000 em)
   lines: string[];
 };
 
@@ -422,6 +457,21 @@ function buildStoryXml(storySelf: string, paragraphs: StoryParagraph[]): string 
     .map((p) => {
       const leading = p.leading === undefined ? "Auto" : String(p.leading);
       const fill = p.fillColor ?? "Color/Black";
+      const csAttrs = [
+        `AppliedCharacterStyle="CharacterStyle/$ID/[No character style]"`,
+        `PointSize="${p.pointSize}"`,
+        `Leading="${leading}"`,
+        `FillColor="${fill}"`,
+      ];
+      if (p.capitalization) {
+        csAttrs.push(`Capitalization="${p.capitalization}"`);
+      }
+      if (p.tracking !== undefined) {
+        csAttrs.push(`Tracking="${p.tracking}"`);
+      }
+      if (p.fontStyle) {
+        csAttrs.push(`FontStyle="${xmlEscape(p.fontStyle)}"`);
+      }
       const contentLines = p.lines
         .map((line, idx) => {
           const esc = xmlEscape(line);
@@ -431,8 +481,11 @@ function buildStoryXml(storySelf: string, paragraphs: StoryParagraph[]): string 
           return `\t\t\t\t<Content>${esc}</Content>\n\t\t\t\t<Br/>`;
         })
         .join("\n");
+      const appliedFontProp = p.appliedFont
+        ? `\n\t\t\t\t<Properties>\n\t\t\t\t\t<AppliedFont type="string">${xmlEscape(sanitizeFontFamily(p.appliedFont))}</AppliedFont>\n\t\t\t\t</Properties>`
+        : "";
       return `\t\t<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle">
-\t\t\t<CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]" PointSize="${p.pointSize}" Leading="${leading}" FillColor="${fill}">
+\t\t\t<CharacterStyleRange ${csAttrs.join(" ")}>${appliedFontProp}
 ${contentLines}
 \t\t\t</CharacterStyleRange>
 \t\t</ParagraphStyleRange>`;
@@ -461,9 +514,17 @@ function buildPaletteSpread(params: {
   pageSize: IdmlPageSize;
   brandName: string;
   prepared: PreparedColor[];
+  typography?: IdmlTypographyRole[];
 }): SpreadBuildResult {
-  const { spreadSelf, pageSelf, masterSelf, pageSize, brandName, prepared } =
-    params;
+  const {
+    spreadSelf,
+    pageSelf,
+    masterSelf,
+    pageSize,
+    brandName,
+    prepared,
+    typography = [],
+  } = params;
   const w = pageSize.widthPt;
   const h = pageSize.heightPt;
 
@@ -501,10 +562,120 @@ function buildPaletteSpread(params: {
     )
   );
 
+  // Typografie-Block (falls vorhanden): oberhalb der Farben.
+  let typographyBlockH = 0;
+  const typographyTop = margin + titleFrameH + gutter;
+  const typographyLeft = margin;
+  const typographyW = w - 2 * margin;
+  const labelColumnW = 80;
+
+  if (typography.length > 0) {
+    // Abschnittsueberschrift "Typografie"
+    const sectionStorySelf = "story_typography_section";
+    storySelfs.push(sectionStorySelf);
+    storyFiles.push({
+      path: `Stories/Story_${sectionStorySelf}.xml`,
+      xml: buildStoryXml(sectionStorySelf, [
+        {
+          pointSize: 9,
+          leading: 12,
+          capitalization: "AllCaps",
+          tracking: 200,
+          lines: ["Typografie"],
+        },
+      ]),
+    });
+    const sectionHeaderH = 14;
+    items.push(
+      buildTextFrame(
+        "frame_typography_section",
+        sectionStorySelf,
+        typographyLeft,
+        typographyTop,
+        typographyW,
+        sectionHeaderH,
+        h
+      )
+    );
+    typographyBlockH += sectionHeaderH + 6;
+
+    typography.forEach((role, idx) => {
+      const rowH = Math.max(role.pointSize * 1.25 + 4, 24);
+      const rowTop = typographyTop + typographyBlockH;
+
+      const labelStorySelf = `story_typo_label_${idx}`;
+      storySelfs.push(labelStorySelf);
+      storyFiles.push({
+        path: `Stories/Story_${labelStorySelf}.xml`,
+        xml: buildStoryXml(labelStorySelf, [
+          {
+            pointSize: 8,
+            leading: 11,
+            capitalization: "AllCaps",
+            tracking: 200,
+            lines: [role.label],
+          },
+        ]),
+      });
+      items.push(
+        buildTextFrame(
+          `frame_typo_label_${idx}`,
+          labelStorySelf,
+          typographyLeft,
+          rowTop + Math.max(0, (rowH - 11) / 2),
+          labelColumnW,
+          12,
+          h
+        )
+      );
+
+      const sampleStorySelf = `story_typo_sample_${idx}`;
+      storySelfs.push(sampleStorySelf);
+      const fontStyle = role.italic
+        ? (role.weight ?? 0) >= 600
+          ? "Bold Italic"
+          : "Italic"
+        : (role.weight ?? 0) >= 600
+          ? "Bold"
+          : (role.weight ?? 0) >= 500
+            ? "Medium"
+            : "Regular";
+      storyFiles.push({
+        path: `Stories/Story_${sampleStorySelf}.xml`,
+        xml: buildStoryXml(sampleStorySelf, [
+          {
+            pointSize: role.pointSize,
+            leading: Math.round(role.pointSize * 1.2),
+            appliedFont: role.family,
+            fontStyle,
+            capitalization: role.uppercase ? "AllCaps" : undefined,
+            tracking: role.letterSpacing,
+            lines: [role.sampleText],
+          },
+        ]),
+      });
+      items.push(
+        buildTextFrame(
+          `frame_typo_sample_${idx}`,
+          sampleStorySelf,
+          typographyLeft + labelColumnW + gutter,
+          rowTop,
+          typographyW - labelColumnW - gutter,
+          rowH,
+          h
+        )
+      );
+
+      typographyBlockH += rowH + 4;
+    });
+
+    typographyBlockH += 12; // Abstand zum Farbraster
+  }
+
   // Farbraster. Layout ist abhängig von der Anzahl Farben. Swatches werden
   // kompakt gehalten (max. ~42 mm breit), mit abgerundeten Ecken.
   const n = prepared.length;
-  const gridTop = margin + titleFrameH + gutter;
+  const gridTop = margin + titleFrameH + gutter + typographyBlockH;
   const gridLeft = margin;
   const gridW = w - 2 * margin;
   const gridH = h - gridTop - margin;
@@ -708,7 +879,7 @@ function spreadSelfToPageId(spreadSelf: string): string {
  * `URL.createObjectURL` zum Download angeboten werden.
  */
 export async function generateIdml(options: GenerateIdmlOptions): Promise<Blob> {
-  const { brandName, colors } = options;
+  const { brandName, colors, typography } = options;
   const pageSize: IdmlPageSize =
     options.pageSize ?? buildPageSizeFromMm(210, 297, "portrait");
 
@@ -737,6 +908,7 @@ export async function generateIdml(options: GenerateIdmlOptions): Promise<Blob> 
     pageSize,
     brandName,
     prepared,
+    typography,
   });
 
   zip.file(
@@ -751,7 +923,8 @@ export async function generateIdml(options: GenerateIdmlOptions): Promise<Blob> 
   );
 
   zip.file("Resources/Graphic.xml", buildGraphicXml(prepared));
-  zip.file("Resources/Fonts.xml", buildFontsXml());
+  const fontFamilies = (typography ?? []).map((t) => t.family);
+  zip.file("Resources/Fonts.xml", buildFontsXml(fontFamilies));
   zip.file("Resources/Styles.xml", buildStylesXml());
   zip.file("Resources/Preferences.xml", buildPreferencesXml(pageSize));
 
@@ -784,4 +957,76 @@ export function suggestIdmlFilename(brandName: string): string {
       .replace(/[^A-Za-z0-9-_]+/g, "-")
       .replace(/^-+|-+$/g, "") || "brand";
   return `${base}-farben.idml`;
+}
+
+export function suggestIdmlPackageFilename(brandName: string): string {
+  const base =
+    brandName
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Za-z0-9-_]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "brand";
+  return `${base}-indesign-paket.zip`;
+}
+
+export type IdmlPackageFontFile = {
+  /** Originaler Dateiname inkl. Endung (ohne Ordnerpfad). */
+  name: string;
+  /** Binaerinhalt (ArrayBuffer/Uint8Array) der Schriftdatei. */
+  data: ArrayBuffer | Uint8Array;
+};
+
+export type IdmlPackageFont = {
+  family: string;
+  files: IdmlPackageFontFile[];
+};
+
+export type GenerateIdmlPackageOptions = GenerateIdmlOptions & {
+  fonts?: IdmlPackageFont[];
+};
+
+function sanitizeFolderName(name: string): string {
+  return (
+    name
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Za-z0-9-_ ]+/g, "-")
+      .trim() || "Font"
+  );
+}
+
+/**
+ * Erstellt ein ZIP-Paket mit der generierten .idml und einem Unterordner
+ * `Document fonts/` mit allen mitgelieferten Schriftdateien. InDesign
+ * erkennt diesen Ordner automatisch beim Oeffnen der .idml (Package-Layout).
+ */
+export async function generateIdmlPackage(
+  options: GenerateIdmlPackageOptions
+): Promise<Blob> {
+  const idmlBlob = await generateIdml(options);
+  const idmlBuffer = await idmlBlob.arrayBuffer();
+
+  const zip = new JSZip();
+  zip.file(suggestIdmlFilename(options.brandName), idmlBuffer);
+
+  const fonts = options.fonts ?? [];
+  if (fonts.length > 0) {
+    const fontsRoot = zip.folder("Document fonts");
+    if (fontsRoot) {
+      for (const font of fonts) {
+        const subfolder = fontsRoot.folder(sanitizeFolderName(font.family));
+        if (!subfolder) continue;
+        for (const file of font.files) {
+          subfolder.file(file.name, file.data);
+        }
+      }
+    }
+  }
+
+  return zip.generateAsync({
+    type: "blob",
+    mimeType: "application/zip",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
 }
