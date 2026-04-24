@@ -17,6 +17,7 @@ import ConfirmDialog from "./ConfirmDialog";
 type Brand = {
   id: string;
   name: string;
+  slug: string;
 };
 
 export default function BrandManager() {
@@ -38,7 +39,7 @@ export default function BrandManager() {
     setError(null);
     const { data, error: loadError } = await supabase
       .from("brands")
-      .select("id, name")
+      .select("id, name, slug")
       .order("created_at", { ascending: true });
 
     if (loadError) {
@@ -149,7 +150,7 @@ export default function BrandManager() {
     const { data, error: insertError } = await supabase
       .from("brands")
       .insert({ name: trimmed, slug: uniqueSlug })
-      .select("id, name")
+      .select("id, name, slug")
       .single();
 
     if (insertError) {
@@ -193,11 +194,11 @@ export default function BrandManager() {
         onClick={() => setFormOpen(true)}
         aria-label="Neue Brand anlegen"
         title="Neue Brand anlegen"
-        className="fixed left-6 top-6 z-40 flex h-24 w-24 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
+        className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
       >
         <svg
-          width="40"
-          height="40"
+          width="20"
+          height="20"
           viewBox="0 0 20 20"
           fill="none"
           aria-hidden="true"
@@ -211,7 +212,10 @@ export default function BrandManager() {
         </svg>
       </button>
 
-      <section className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6">
+      <section
+        id="brands"
+        className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6"
+      >
         {error && !formOpen && (
           <p
             role="alert"
@@ -230,6 +234,7 @@ export default function BrandManager() {
                 <BrandCard
                   key={brand.id}
                   name={brand.name}
+                  slug={brand.slug}
                   onDelete={() => setPendingDelete(brand)}
                 />
               ))}

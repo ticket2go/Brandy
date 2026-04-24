@@ -41,7 +41,7 @@ export default function Title({ text }: TitleProps) {
       aria-label={text}
       className="m-0 flex whitespace-nowrap font-bold text-black"
       style={{
-        fontSize: "clamp(2rem, 8vw, 6rem)",
+        fontSize: "clamp(1.5rem, 5vw, 3.5rem)",
         letterSpacing: "-0.02em",
       }}
     >
