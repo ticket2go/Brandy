@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { supabase } from "@/lib/supabase/client";
 
+import BrandRoles from "./BrandRoles";
 import ColorsPanel from "./ColorsPanel";
 
 type Brand = {
@@ -205,6 +206,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
             </label>
           </div>
         </div>
+        <BrandRoles />
       </header>
 
       {error && (
