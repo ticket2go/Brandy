@@ -239,16 +239,20 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
       </div>
 
       <div role="tabpanel" className="min-h-[300px]">
-        {activeTab === "logokit" && (
-          <LogokitPanel logoSrc={logoSrc} brandName={brand.name} />
-        )}
-        {activeTab === "farben" && <ColorsPanel brandName={brand.name} />}
-        {activeTab === "typografie" && <PlaceholderPanel title="Typografie" />}
-        {activeTab === "elemente" && <PlaceholderPanel title="Elemente" />}
-        {activeTab === "digital" && <PlaceholderPanel title="Digital" />}
-        {activeTab === "anwendungsbeispiele" && (
-          <PlaceholderPanel title="Anwendungsbeispiele" />
-        )}
+        <TabFade tabKey={activeTab}>
+          {activeTab === "logokit" && (
+            <LogokitPanel logoSrc={logoSrc} brandName={brand.name} />
+          )}
+          {activeTab === "farben" && <ColorsPanel brandName={brand.name} />}
+          {activeTab === "typografie" && (
+            <PlaceholderPanel title="Typografie" />
+          )}
+          {activeTab === "elemente" && <PlaceholderPanel title="Elemente" />}
+          {activeTab === "digital" && <PlaceholderPanel title="Digital" />}
+          {activeTab === "anwendungsbeispiele" && (
+            <PlaceholderPanel title="Anwendungsbeispiele" />
+          )}
+        </TabFade>
       </div>
     </section>
   );
@@ -300,6 +304,43 @@ function PlaceholderPanel({ title }: { title: string }) {
       <p className="mt-2 text-sm text-black/50">
         Inhalte für „{title}“ folgen in Kürze.
       </p>
+    </div>
+  );
+}
+
+function TabFade({
+  tabKey,
+  children,
+}: {
+  tabKey: string;
+  children: React.ReactNode;
+}) {
+  const [visibleKey, setVisibleKey] = useState(tabKey);
+  const [displayed, setDisplayed] = useState(children);
+  const [fading, setFading] = useState(false);
+
+  useEffect(() => {
+    if (tabKey === visibleKey) {
+      setDisplayed(children);
+      return;
+    }
+    setFading(true);
+    const timeout = window.setTimeout(() => {
+      setDisplayed(children);
+      setVisibleKey(tabKey);
+      setFading(false);
+    }, 180);
+    return () => window.clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabKey, children]);
+
+  return (
+    <div
+      key={visibleKey}
+      className="transition-opacity duration-300 ease-out"
+      style={{ opacity: fading ? 0 : 1 }}
+    >
+      {displayed}
     </div>
   );
 }

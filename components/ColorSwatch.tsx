@@ -12,6 +12,7 @@ export type ColorSwatchData = {
 
 type ColorSwatchProps = ColorSwatchData & {
   onHoverChange?: (hex: string | null) => void;
+  onEdit?: () => void;
 };
 
 export default function ColorSwatch({
@@ -20,6 +21,7 @@ export default function ColorSwatch({
   code,
   codeLabel,
   onHoverChange,
+  onEdit,
 }: ColorSwatchProps) {
   const [copied, setCopied] = useState(false);
 
@@ -48,6 +50,20 @@ export default function ColorSwatch({
         style={{ backgroundColor: hex }}
         aria-hidden
       >
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onEdit?.();
+          }}
+          aria-label={`Farbe ${name} bearbeiten`}
+          className="absolute left-2 top-2 rounded-sm px-1 text-[10px] font-medium uppercase tracking-widest text-white/90 opacity-0 transition-opacity duration-200 hover:text-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
+          style={{ textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}
+        >
+          Bearbeiten
+        </button>
+
         <button
           type="button"
           onClick={handleCopy}

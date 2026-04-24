@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import AddColorSwatch from "./AddColorSwatch";
 import ColorSwatch, { type ColorSwatchData } from "./ColorSwatch";
 
 type ColorsPanelProps = {
@@ -181,21 +182,19 @@ export default function ColorsPanel({ brandName }: ColorsPanelProps) {
             })}
           </div>
 
-          {visiblePrintColors.length > 0 ? (
-            <div className="flex flex-wrap gap-4">
-              {visiblePrintColors.map((color) => (
-                <ColorSwatch
-                  key={`print-${printFilter}-${color.hex}-${color.name}`}
-                  {...color}
-                  onHoverChange={setHoveredColor}
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-black/50">
-              Für diese Auswahl sind noch keine Werte hinterlegt.
-            </p>
-          )}
+          <div className="flex flex-wrap gap-4">
+            {visiblePrintColors.map((color) => (
+              <ColorSwatch
+                key={`print-${printFilter}-${color.hex}-${color.name}`}
+                {...color}
+                onHoverChange={setHoveredColor}
+                onEdit={() => {
+                  // TODO: Farbe bearbeiten
+                }}
+              />
+            ))}
+            <AddColorSwatch />
+          </div>
         </section>
 
         <section className="flex flex-col gap-5">
@@ -213,8 +212,12 @@ export default function ColorsPanel({ brandName }: ColorsPanelProps) {
                 key={`digital-${color.hex}-${color.name}`}
                 {...color}
                 onHoverChange={setHoveredColor}
+                onEdit={() => {
+                  // TODO: Farbe bearbeiten
+                }}
               />
             ))}
+            <AddColorSwatch />
           </div>
         </section>
       </div>
