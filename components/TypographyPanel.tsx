@@ -76,6 +76,10 @@ export default function TypographyPanel({
     null
   );
   const [exportingFontId, setExportingFontId] = useState<string | null>(null);
+  const [convertingFontId, setConvertingFontId] = useState<string | null>(
+    null
+  );
+  const [convertProgress, setConvertProgress] = useState<string | null>(null);
 
   const toggleCollapsed = (fontId: string) => {
     setCollapsed((prev) => ({ ...prev, [fontId]: !prev[fontId] }));
@@ -339,10 +343,144 @@ export default function TypographyPanel({
     }
   };
 
+  const convertToWoff2 = async (
+    font: BrandFont
+  ): Promise<{ ok: boolean; created: BrandFontFile[] }> => {
+    if (convertingFontId) return { ok: false, created: [] };
+    const fontFiles = filesByFont.get(font.id) ?? [];
+    // Pro (weight, italic) pruefen, ob schon eine woff2 existiert, sonst
+    // eine passende Quelle (ttf bevorzugt, sonst otf) konvertieren.
+    type Source = { file: BrandFontFile };
+    const needed = new Map<string, Source>();
+    for (const file of fontFiles) {
+      const key = `${file.weight}-${file.italic ? 1 : 0}`;
+      const hasWoff2 = fontFiles.some(
+        (f) => f.weight === file.weight && f.italic === file.italic && f.format === "woff2"
+      );
+      if (hasWoff2) continue;
+      const current = needed.get(key);
+      // ttf bevorzugt, sonst otf (wawoff2 kann beides, da beide SFNT sind).
+      const prio: Record<string, number> = { ttf: 0, otf: 1, woff: 99, eot: 99 };
+      const fPrio = prio[file.format] ?? 100;
+      const cPrio = current ? (prio[current.file.format] ?? 100) : 101;
+      if (fPrio < cPrio && (file.format === "ttf" || file.format === "otf")) {
+        needed.set(key, { file });
+      }
+    }
+
+    if (needed.size === 0) {
+      return { ok: true, created: [] };
+    }
+
+    setConvertingFontId(font.id);
+    setError(null);
+    setConvertProgress(null);
+    const familySlug = sanitizeSegment(font.family);
+    const created: BrandFontFile[] = [];
+
+    try {
+      const total = needed.size;
+      let index = 0;
+      for (const source of needed.values()) {
+        index += 1;
+        setConvertProgress(
+          `Konvertiere ${source.file.style_label} (${index}/${total}) …`
+        );
+
+        const srcBuffer = await fetchFileBlob(source.file.storage_path);
+        const response = await fetch("/api/fonts/convert", {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: srcBuffer,
+        });
+        if (!response.ok) {
+          const data = (await response.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          throw new Error(
+            data?.error ??
+              `Konvertierung fehlgeschlagen (Status ${response.status}).`
+          );
+        }
+        const woff2Buffer = await response.arrayBuffer();
+        const variant = source.file.variant;
+        const path = `${brandSlug}/fonts/${familySlug}/${font.id}/${variant}.woff2`;
+
+        const { error: uploadError } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(path, new Uint8Array(woff2Buffer), {
+            upsert: true,
+            contentType: "font/woff2",
+            cacheControl: "31536000",
+          });
+        if (uploadError) throw new Error(uploadError.message);
+
+        const { data: fileRow, error: insertError } = await supabase
+          .from("brand_font_files")
+          .insert({
+            font_id: font.id,
+            variant,
+            style_label: source.file.style_label,
+            weight: source.file.weight,
+            italic: source.file.italic,
+            format: "woff2",
+            storage_path: path,
+            size_bytes: woff2Buffer.byteLength,
+          })
+          .select(
+            "id, font_id, variant, style_label, weight, italic, format, storage_path, size_bytes"
+          )
+          .single();
+        if (insertError) throw new Error(insertError.message);
+        if (fileRow) created.push(fileRow as BrandFontFile);
+      }
+
+      if (created.length > 0) {
+        setFiles((prev) => [...prev, ...created]);
+      }
+      return { ok: true, created };
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Konvertierung fehlgeschlagen."
+      );
+      return { ok: false, created };
+    } finally {
+      setConvertingFontId(null);
+      setConvertProgress(null);
+    }
+  };
+
   const exportWebFont = async (font: BrandFont) => {
     if (exportingFontId) return;
-    const fontFiles = filesByFont.get(font.id) ?? [];
+    let fontFiles = filesByFont.get(font.id) ?? [];
     if (fontFiles.length === 0) return;
+
+    // Wenn noch keine WOFF2-Dateien existieren, bieten wir eine automatische
+    // Konvertierung aus TTF/OTF an.
+    const hasWoff2 = fontFiles.some((f) => f.format === "woff2");
+    const hasTtfOrOtf = fontFiles.some(
+      (f) => f.format === "ttf" || f.format === "otf"
+    );
+    if (!hasWoff2) {
+      if (!hasTtfOrOtf) {
+        setError(
+          "Fuer den Webexport werden WOFF2-Dateien benoetigt. Fuege eine TTF- oder OTF-Datei hinzu, um automatisch zu konvertieren."
+        );
+        return;
+      }
+      const confirmed = window.confirm(
+        `Fuer den Webexport werden WOFF2-Dateien benoetigt. Sollen die vorhandenen TTF/OTF-Dateien von "${font.family}" automatisch zu WOFF2 konvertiert werden?`
+      );
+      if (!confirmed) return;
+      const { ok, created } = await convertToWoff2(font);
+      if (!ok) return;
+      // setFiles ist asynchron. Wir arbeiten unten direkt mit dem Mergewert,
+      // damit der Export nicht auf das naechste Render warten muss.
+      fontFiles = [...fontFiles, ...created];
+    }
+
     setExportingFontId(font.id);
     setError(null);
     try {
@@ -506,8 +644,9 @@ export default function TypographyPanel({
           </h3>
           <p className="mt-1 text-sm text-black/60">
             Suche Schriften bei Google Fonts (WOFF2 + TTF) oder lade eigene
-            Schriftdateien hoch. Der Webexport nutzt ausschliesslich WOFF2, der
-            ZIP-Download enthaelt alle hinterlegten Formate.
+            Schriftdateien hoch. TTF/OTF-Uploads koennen mit einem Klick zu
+            WOFF2 konvertiert werden. Der Webexport enthaelt das fertige
+            @font-face-Paket, der ZIP-Download alle hinterlegten Formate.
           </p>
         </div>
         <button
@@ -573,6 +712,12 @@ export default function TypographyPanel({
             const isCollapsed = collapsed[font.id] === true;
             const isDownloading = downloadingFontId === font.id;
             const isExporting = exportingFontId === font.id;
+            const isConverting = convertingFontId === font.id;
+            const hasWoff2 = fontFiles.some((f) => f.format === "woff2");
+            const hasConvertibleSource = fontFiles.some(
+              (f) => f.format === "ttf" || f.format === "otf"
+            );
+            const canConvert = !hasWoff2 && hasConvertibleSource;
 
             return (
               <article
@@ -647,10 +792,40 @@ export default function TypographyPanel({
                       </svg>
                       {isDownloading ? "Packe ZIP …" : "Alle Schnitte (ZIP)"}
                     </button>
+                    {canConvert && (
+                      <button
+                        type="button"
+                        onClick={() => convertToWoff2(font)}
+                        disabled={isConverting}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-black/15 bg-white px-3 py-1.5 text-xs font-medium text-black/80 transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60"
+                        title="TTF/OTF-Dateien zu WOFF2 konvertieren"
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 12 12"
+                          aria-hidden
+                        >
+                          <path
+                            d="M2 4.5a4 4 0 0 1 7-1.5M10 7.5a4 4 0 0 1-7 1.5M9 2v2.5H6.5M3 10V7.5H5.5"
+                            stroke="currentColor"
+                            strokeWidth="1.3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            fill="none"
+                          />
+                        </svg>
+                        {isConverting
+                          ? convertProgress ?? "Konvertiere …"
+                          : "Zu WOFF2 konvertieren"}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => exportWebFont(font)}
-                      disabled={fontFiles.length === 0 || isExporting}
+                      disabled={
+                        fontFiles.length === 0 || isExporting || isConverting
+                      }
                       className="inline-flex items-center gap-1.5 rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white transition enabled:hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
                       title="Webfont-Paket mit @font-face CSS und Dateien herunterladen"
                     >
