@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 type NavItem = {
@@ -8,22 +9,24 @@ type NavItem = {
 };
 
 const primaryItems: NavItem[] = [
-  { label: "Work", href: "#work" },
-  { label: "Services", href: "#services" },
-  { label: "Pricing", href: "#pricing" },
-  { label: "Approach", href: "#approach" },
-  { label: "Book a Call", href: "#book" },
+  { label: "Brands", href: "/#brands" },
+  { label: "Design Manuals", href: "/design-manuals" },
+  { label: "Ecosystem", href: "/ecosystem" },
 ];
 
 const resourceItems: NavItem[] = [
-  { label: "Writing", href: "#writing" },
-  { label: "Twitter / X", href: "https://x.com" },
-  { label: "LinkedIn", href: "https://linkedin.com" },
-  { label: "Terms of Service", href: "#terms" },
+  { label: "Account", href: "/account" },
+  { label: "Login", href: "/login" },
 ];
 
 export default function NavCard() {
-  const [open, setOpen] = useState(true);
+  const pathname = usePathname();
+  const isHome = pathname === "/";
+  const [open, setOpen] = useState(isHome);
+
+  useEffect(() => {
+    setOpen(isHome);
+  }, [isHome]);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
   const labelRef = useRef<HTMLSpanElement | null>(null);
