@@ -15,7 +15,11 @@ import {
   hexToRgb,
   type Cmyk,
 } from "@/lib/color";
-import { parseCclibsFile, type CclibsColor } from "@/lib/parseCclibs";
+import {
+  parseCclibsFile,
+  type CclibsColor,
+  type CclibsDiagnostics,
+} from "@/lib/parseCclibs";
 
 import Modal from "./Modal";
 
@@ -106,6 +110,8 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [urlResults, setUrlResults] = useState<ExtractedColor[] | null>(null);
   const [fileResults, setFileResults] = useState<CclibsColor[] | null>(null);
+  const [fileDiagnostics, setFileDiagnostics] =
+    useState<CclibsDiagnostics | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [parsingFile, setParsingFile] = useState(false);
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
@@ -123,6 +129,7 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
       setError(null);
       setUrlResults(null);
       setFileResults(null);
+      setFileDiagnostics(null);
       setFileName(null);
       setParsingFile(false);
       setRowState({});
@@ -268,8 +275,9 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
     setFileResults(null);
     setFileName(file.name);
     try {
-      const parsed = await parseCclibsFile(file);
+      const { colors: parsed, diagnostics } = await parseCclibsFile(file);
       setFileResults(parsed);
+      setFileDiagnostics(diagnostics);
       if (parsed.length === 0) {
         setError("Keine Farben in dieser Datei gefunden.");
       }
@@ -497,6 +505,25 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
               </button>
               {fileName && !parsingFile && (
                 <p className="text-[11px] text-black/50">{fileName}</p>
+              )}
+              {fileDiagnostics && !parsingFile && (
+                <div className="mt-2 w-full rounded-md bg-black/[0.03] px-3 py-2 text-left text-[11px] leading-relaxed text-black/60">
+                  <div>
+                    <span className="font-semibold text-black/70">
+                      {fileDiagnostics.groupNames.length}
+                    </span>{" "}
+                    Gruppen erkannt
+                    {fileDiagnostics.groupNames.length > 0 && (
+                      <>: {fileDiagnostics.groupNames.join(", ")}</>
+                    )}
+                  </div>
+                  {fileDiagnostics.groupNames.length === 0 && (
+                    <div className="mt-1 break-all text-black/50">
+                      Gefundene JSON-Keys:{" "}
+                      {fileDiagnostics.topLevelKeys.join(", ") || "-"}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

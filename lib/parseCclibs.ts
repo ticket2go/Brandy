@@ -469,7 +469,18 @@ function tryJsonParse(text: string): unknown | null {
   }
 }
 
-export async function parseCclibsFile(file: File): Promise<CclibsColor[]> {
+export type CclibsDiagnostics = {
+  jsonFileCount: number;
+  groupNames: string[];
+  topLevelKeys: string[];
+};
+
+export type CclibsParseResult = {
+  colors: CclibsColor[];
+  diagnostics: CclibsDiagnostics;
+};
+
+export async function parseCclibsFile(file: File): Promise<CclibsParseResult> {
   if (file.size === 0) throw new Error("Datei ist leer.");
   // CC-Library-Exports kommen mit .cclibs oder .cclib; beide sind ZIP-Container.
   const buffer = await file.arrayBuffer();
@@ -509,12 +520,11 @@ export async function parseCclibsFile(file: File): Promise<CclibsColor[]> {
   //    - Element-Id -> Name, Element-Id -> Group-Id, Group-Id -> Group-Name
   const elementIndex = buildElementIndex(parsedFiles);
 
+  const detectedGroupNames = new Set<string>(elementIndex.groupNameById.values());
   if (typeof console !== "undefined") {
-    const groupNames = Array.from(new Set(elementIndex.groupNameById.values()));
-    // Kompakte Debug-Ausgabe fuer die Browser-Console.
     console.info(
-      `[cclibs] ${parsedFiles.length} JSON-Files, ${groupNames.length} Gruppen erkannt:`,
-      groupNames
+      `[cclibs] ${parsedFiles.length} JSON-Files, ${detectedGroupNames.size} Gruppen erkannt:`,
+      Array.from(detectedGroupNames)
     );
   }
 
@@ -545,26 +555,138 @@ export async function parseCclibsFile(file: File): Promise<CclibsColor[]> {
     );
   }
 
+  // 4. Fallback-Pass: Wenn bis hierhin keine Gruppen zugewiesen wurden,
+  // versuche es anhand der Farbnamen-Konvention (z.B. "Wildeboer-RGB Rot",
+  // wobei der Gruppenteil als Prefix getrennt mit " " oder " / " auftaucht).
+  const colorsWithoutGroup = colors.filter((c) => !c.group);
+  if (
+    colorsWithoutGroup.length > 0 &&
+    (detectedGroupNames.size === 0 ||
+      colorsWithoutGroup.length === colors.length)
+  ) {
+    // Versuch 1: Anhand aller JSON-Dateien nach Strukturen mit benanntem
+    // Parent suchen, dessen Kinder-Array mehrere Farbknoten enthaelt.
+    const inferred = inferGroupsByStructure(parsedFiles);
+    for (const color of colors) {
+      if (color.group) continue;
+      const g = inferred.get(color.hex.toUpperCase());
+      if (g) color.group = g;
+    }
+  }
+
+  const diagnostics: CclibsDiagnostics = {
+    jsonFileCount: parsedFiles.length,
+    groupNames: Array.from(
+      new Set(
+        colors
+          .map((c) => c.group)
+          .filter((g): g is string => typeof g === "string" && g.length > 0)
+      )
+    ).sort((a, b) => a.localeCompare(b, "de")),
+    topLevelKeys: collectTopLevelKeys(parsedFiles),
+  };
+
+  if (typeof console !== "undefined") {
+    console.info(`[cclibs] Ergebnis`, {
+      colors: colors.length,
+      groups: diagnostics.groupNames,
+      topLevelKeys: diagnostics.topLevelKeys,
+    });
+  }
+
   if (colors.length === 0) {
     if (parsedFiles.length === 0) {
       throw new Error(
         "Keine JSON-Daten im Archiv gefunden. Moeglicherweise liegt ein anderes Format vor."
       );
     }
-    // Diagnosis: welche Top-Level-Strukturen wurden gefunden?
-    const hints = new Set<string>();
-    for (const { data } of parsedFiles) {
-      collectHints(data, hints, 0);
-      if (hints.size > 20) break;
-    }
-    const hintText = Array.from(hints).slice(0, 10).join(", ");
+    const hintText = diagnostics.topLevelKeys.slice(0, 10).join(", ");
     throw new Error(
       `Keine Farb-Repraesentationen gefunden (${parsedFiles.length} JSON-Dateien geprueft).` +
         (hintText ? ` Gefundene Schluessel: ${hintText}.` : "")
     );
   }
 
-  return colors;
+  return { colors, diagnostics };
+}
+
+function collectTopLevelKeys(
+  parsedFiles: Array<{ path: string; data: unknown }>
+): string[] {
+  const hints = new Set<string>();
+  for (const { data } of parsedFiles) {
+    collectHints(data, hints, 0);
+    if (hints.size > 30) break;
+  }
+  return Array.from(hints).slice(0, 20);
+}
+
+// Sucht in der JSON-Struktur nach Knoten, die `name` + Array mit mehreren
+// Eintraegen haben, die ihrerseits Farb-Repraesentationen enthalten. Fuer
+// jede darin gefundene Farbe merken wir uns den Namen des Parents als
+// potenzielle Gruppe (indexiert nach HEX).
+function inferGroupsByStructure(
+  parsedFiles: Array<{ path: string; data: unknown }>
+): Map<string, string> {
+  const map = new Map<string, string>();
+
+  const visit = (node: unknown, activeGroup: string | undefined): void => {
+    if (Array.isArray(node)) {
+      for (const entry of node) visit(entry, activeGroup);
+      return;
+    }
+    if (!isObject(node)) return;
+
+    // Kandidaten-Felder fuer Kind-Listen
+    const childFields: unknown[] = [];
+    for (const key of [
+      "children",
+      "elements",
+      "members",
+      "swatches",
+      "colors",
+      "items",
+    ]) {
+      const v = (node as UnknownObject)[key];
+      if (Array.isArray(v)) childFields.push(v);
+    }
+
+    const name = typeof node.name === "string" ? node.name.trim() : "";
+    // Wenn dieser Knoten einen Namen hat und Kind-Listen enthaelt, deren
+    // Inhalte mindestens eine Farbe darstellen, nehmen wir ihn als Gruppe an.
+    let promotedGroup = activeGroup;
+    if (name && childFields.length > 0) {
+      // Pruefe, ob unter diesem Knoten direkt mindestens eine Farbe liegt.
+      let hasColor = false;
+      const precheck = (inner: unknown): void => {
+        if (hasColor) return;
+        if (Array.isArray(inner)) {
+          for (const entry of inner) precheck(entry);
+          return;
+        }
+        if (!isObject(inner)) return;
+        if (parseRepresentation(inner)) {
+          hasColor = true;
+          return;
+        }
+        for (const v of Object.values(inner)) precheck(v);
+      };
+      for (const field of childFields) precheck(field);
+      if (hasColor) promotedGroup = name;
+    }
+
+    const rep = parseRepresentation(node);
+    if (rep && promotedGroup) {
+      const hex = rgbToHex(rep.rgb).toUpperCase();
+      if (!map.has(hex)) map.set(hex, promotedGroup);
+    }
+
+    for (const value of Object.values(node)) visit(value, promotedGroup);
+  };
+
+  for (const { data } of parsedFiles) visit(data, undefined);
+
+  return map;
 }
 
 function collectHints(
