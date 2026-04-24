@@ -351,51 +351,37 @@ export default function TypographyPanel({
       const root = zip.folder(`${familySlug}-web`);
       if (!root) throw new Error("ZIP konnte nicht erstellt werden.");
 
-      // Pro (weight, italic) die beste web-taugliche Datei aussuchen:
-      // woff2 > woff > ttf > otf (eot bewusst ignoriert fuer moderne Browser).
-      const priority: Record<string, number> = {
-        woff2: 0,
-        woff: 1,
-        ttf: 2,
-        otf: 3,
-        eot: 4,
-      };
+      // Webexport ist fuer Entwickler gedacht - ausschliesslich woff2.
       type Picked = {
         file: BrandFontFile;
         relPath: string;
       };
       const byVariant = new Map<string, BrandFontFile[]>();
       for (const file of fontFiles) {
+        if (file.format !== "woff2") continue;
         const key = `${file.weight}-${file.italic ? 1 : 0}`;
         if (!byVariant.has(key)) byVariant.set(key, []);
         byVariant.get(key)!.push(file);
       }
 
-      const picked: Picked[] = [];
-      const extraFormats: Picked[] = [];
-      for (const [, list] of byVariant) {
-        const sorted = list
-          .slice()
-          .sort(
-            (a, b) => (priority[a.format] ?? 99) - (priority[b.format] ?? 99)
-          );
-        const best = sorted[0];
-        const bestRel = `fonts/${familySlug}-${best.variant}.${best.format}`;
-        picked.push({ file: best, relPath: bestRel });
-        for (const other of sorted.slice(1)) {
-          // zusaetzliche Formate als Fallback (woff2 + woff zusammen ist ueblich)
-          const rel = `fonts/${familySlug}-${other.variant}.${other.format}`;
-          extraFormats.push({ file: other, relPath: rel });
-        }
+      if (byVariant.size === 0) {
+        throw new Error(
+          "Fuer diese Schrift sind keine WOFF2-Dateien hinterlegt. Der Webexport benoetigt WOFF2."
+        );
       }
 
-      // Dateien herunterladen
-      for (const entry of [...picked, ...extraFormats]) {
+      const picked: Picked[] = [];
+      for (const [, list] of byVariant) {
+        const best = list[0];
+        const bestRel = `fonts/${familySlug}-${best.variant}.${best.format}`;
+        picked.push({ file: best, relPath: bestRel });
+      }
+
+      for (const entry of picked) {
         const buffer = await fetchFileBlob(entry.file.storage_path);
         root.file(entry.relPath, buffer);
       }
 
-      // @font-face Regeln
       picked.sort((a, b) => {
         if (a.file.weight !== b.file.weight) {
           return a.file.weight - b.file.weight;
@@ -404,30 +390,21 @@ export default function TypographyPanel({
       });
 
       const cssLines: string[] = [];
-      cssLines.push(`/* ${font.family} – Webfont */`);
+      cssLines.push(`/* ${font.family} – Webfont (WOFF2) */`);
       cssLines.push(
         `/* Einbindung: <link rel="stylesheet" href="${familySlug}.css"> */`
       );
       cssLines.push("");
       for (const entry of picked) {
         const file = entry.file;
-        // Fallback-Formate fuer dasselbe (weight, italic) einsammeln
-        const fallbacks = extraFormats.filter(
-          (e) =>
-            e.file.weight === file.weight && e.file.italic === file.italic
-        );
-        const sources = [entry, ...fallbacks]
-          .map(
-            (e) =>
-              `       url('./${e.relPath}') format('${cssFormatName(e.file.format)}')`
-          )
-          .join(",\n");
         cssLines.push("@font-face {");
         cssLines.push(`  font-family: '${font.family}';`);
         cssLines.push(`  font-style: ${file.italic ? "italic" : "normal"};`);
         cssLines.push(`  font-weight: ${file.weight};`);
         cssLines.push(`  font-display: swap;`);
-        cssLines.push(`  src: ${sources.trimStart()};`);
+        cssLines.push(
+          `  src: url('./${entry.relPath}') format('${cssFormatName(file.format)}');`
+        );
         cssLines.push("}");
         cssLines.push("");
       }
@@ -441,7 +418,7 @@ export default function TypographyPanel({
         "## Inhalt",
         "",
         `- \`${familySlug}.css\` – @font-face-Deklarationen`,
-        "- `fonts/` – Schriftdateien (woff2 wird bevorzugt, weitere Formate als Fallback)",
+        "- `fonts/` – WOFF2-Schriftdateien (fuer Webentwicklung)",
         "",
         "## Einbindung",
         "",
@@ -528,8 +505,9 @@ export default function TypographyPanel({
             Schriften
           </h3>
           <p className="mt-1 text-sm text-black/60">
-            Suche Schriften bei Google Fonts oder lade eigene Schriftdateien
-            hoch. Bei eigenen Dateien muss die Lizenz bestaetigt werden.
+            Suche Schriften bei Google Fonts (WOFF2 + TTF) oder lade eigene
+            Schriftdateien hoch. Der Webexport nutzt ausschliesslich WOFF2, der
+            ZIP-Download enthaelt alle hinterlegten Formate.
           </p>
         </div>
         <button
