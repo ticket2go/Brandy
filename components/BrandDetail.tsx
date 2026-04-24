@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase/client";
 
 import BrandRoles from "./BrandRoles";
 import ColorsPanel from "./ColorsPanel";
+import { FigmaIcon, IndesignIcon } from "./ExportIcons";
 
 type Brand = {
   id: string;
@@ -218,26 +219,47 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
         </p>
       )}
 
-      <div className="flex flex-wrap gap-2 border-b border-black/10">
-        {TABS.map((tab) => {
-          const isActive = tab.key === activeTab;
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              className={`-mb-px rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition ${
-                isActive
-                  ? "border-black text-black"
-                  : "border-transparent text-black/50 hover:text-black"
-              }`}
-              aria-selected={isActive}
-              role="tab"
-            >
-              {tab.label}
-            </button>
-          );
-        })}
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-black/10">
+        <div role="tablist" className="flex flex-wrap gap-2">
+          {TABS.map((tab) => {
+            const isActive = tab.key === activeTab;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={`-mb-px rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition ${
+                  isActive
+                    ? "border-black text-black"
+                    : "border-transparent text-black/50 hover:text-black"
+                }`}
+                aria-selected={isActive}
+                role="tab"
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="ml-auto flex items-center gap-2 pb-2 pl-2 text-xs text-black/50">
+          <span className="font-medium uppercase tracking-wider">Export:</span>
+          <button
+            type="button"
+            aria-label="Export nach Adobe InDesign"
+            title="Export nach Adobe InDesign"
+            className="flex h-6 w-6 items-center justify-center rounded-md transition hover:scale-110 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30"
+          >
+            <IndesignIcon className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            aria-label="Export nach Figma"
+            title="Export nach Figma"
+            className="flex h-6 w-6 items-center justify-center rounded-md transition hover:scale-110 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30"
+          >
+            <FigmaIcon className="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
       <div role="tabpanel" className="min-h-[300px]">
