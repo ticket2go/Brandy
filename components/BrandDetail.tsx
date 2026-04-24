@@ -288,26 +288,65 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
               </>
             )}
           </div>
-          <div className="flex items-center gap-4">
-            {logoSrc && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={logoSrc}
-                alt={`${brand.name} Logo`}
-                className="h-14 w-14 rounded-xl border border-black/10 bg-white object-contain p-2"
-              />
-            )}
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-black/15 bg-white px-4 py-2 text-sm font-medium text-black transition hover:bg-black/5">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileChange}
+          <div className="flex items-center gap-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileChange}
+              disabled={uploading}
+              className="hidden"
+            />
+            {logoSrc ? (
+              <div className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={logoSrc}
+                  alt={`${brand.name} Logo`}
+                  className="h-14 w-14 rounded-xl border border-black/10 bg-white object-contain p-2"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  aria-label="Logo ändern"
+                  title={uploading ? "Lädt hoch …" : "Logo ändern"}
+                  className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-black/10 bg-white text-black/40 shadow-sm transition hover:text-black/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {uploading ? (
+                    <span
+                      className="h-3 w-3 animate-spin rounded-full border-2 border-black/20 border-t-black/70"
+                      aria-hidden
+                    />
+                  ) : (
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="hidden"
-              />
-              {uploading ? "Lädt hoch …" : "Logo hochladen"}
-            </label>
+                className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-black/15 bg-white px-4 py-2 text-sm font-medium text-black transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {uploading ? "Lädt hoch …" : "Logo hochladen"}
+              </button>
+            )}
           </div>
         </div>
         <BrandRoles />
