@@ -258,6 +258,54 @@ export interface Database {
         };
         Relationships: [];
       };
+      brand_logos: {
+        Row: {
+          id: string;
+          brand_id: string;
+          file_name: string;
+          format: "eps" | "jpg" | "png" | "svg" | "pdf";
+          variant: "bildmarke" | "wortmarke" | "wort-bildmarke" | null;
+          polarity: "positiv" | "negativ" | null;
+          color_space: "cmyk" | "rgb" | null;
+          storage_path: string;
+          mime_type: string | null;
+          size_bytes: number | null;
+          position: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          brand_id: string;
+          file_name: string;
+          format: "eps" | "jpg" | "png" | "svg" | "pdf";
+          variant?: "bildmarke" | "wortmarke" | "wort-bildmarke" | null;
+          polarity?: "positiv" | "negativ" | null;
+          color_space?: "cmyk" | "rgb" | null;
+          storage_path: string;
+          mime_type?: string | null;
+          size_bytes?: number | null;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          brand_id?: string;
+          file_name?: string;
+          format?: "eps" | "jpg" | "png" | "svg" | "pdf";
+          variant?: "bildmarke" | "wortmarke" | "wort-bildmarke" | null;
+          polarity?: "positiv" | "negativ" | null;
+          color_space?: "cmyk" | "rgb" | null;
+          storage_path?: string;
+          mime_type?: string | null;
+          size_bytes?: number | null;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       assets: {
         Row: {
           id: string;

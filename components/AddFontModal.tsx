@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import DropZone from "./DropZone";
 import Modal from "./Modal";
 import {
   formatFromFilename,
@@ -136,7 +137,6 @@ export default function AddFontModal({
   // Custom state
   const [customFamily, setCustomFamily] = useState("");
   const [customEntries, setCustomEntries] = useState<CustomEntry[]>([]);
-  const customInputRef = useRef<HTMLInputElement | null>(null);
 
   const [licenseConfirmed, setLicenseConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -227,11 +227,13 @@ export default function AddFontModal({
     });
   };
 
-  const handleCustomFiles = (filesList: FileList | null) => {
-    if (!filesList || filesList.length === 0) return;
+  const handleCustomFiles = (files: File[] | FileList | null) => {
+    if (!files) return;
+    const list = Array.isArray(files) ? files : Array.from(files);
+    if (list.length === 0) return;
     const newEntries: CustomEntry[] = [];
-    for (let i = 0; i < filesList.length; i += 1) {
-      const file = filesList[i];
+    for (let i = 0; i < list.length; i += 1) {
+      const file = list[i];
       const format = formatFromFilename(file.name);
       if (!format) continue;
       const lowerName = file.name.toLowerCase();
@@ -551,37 +553,17 @@ export default function AddFontModal({
               />
             </label>
             <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs uppercase tracking-widest text-black/50">
-                  Schriftdateien
-                </span>
-                <button
-                  type="button"
-                  onClick={() => customInputRef.current?.click()}
-                  className="rounded-lg border border-black/15 bg-white px-3 py-1.5 text-xs font-medium text-black hover:bg-black/5"
-                >
-                  Dateien auswaehlen
-                </button>
-                <input
-                  ref={customInputRef}
-                  type="file"
-                  accept=".woff2,.woff,.ttf,.otf,.eot,font/woff2,font/woff,font/ttf,font/otf"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    handleCustomFiles(e.target.files);
-                    if (customInputRef.current) {
-                      customInputRef.current.value = "";
-                    }
-                  }}
-                />
-              </div>
-              {customEntries.length === 0 ? (
-                <p className="rounded-xl border border-dashed border-black/15 px-3 py-4 text-center text-xs text-black/40">
-                  Noch keine Schriftdateien ausgewaehlt. Unterstuetzt werden
-                  woff2, woff, ttf, otf und eot.
-                </p>
-              ) : (
+              <span className="text-xs uppercase tracking-widest text-black/50">
+                Schriftdateien
+              </span>
+              <DropZone
+                accept=".woff2,.woff,.ttf,.otf,.eot,font/woff2,font/woff,font/ttf,font/otf"
+                onFiles={handleCustomFiles}
+                title="Schriftdateien hierher ziehen"
+                description="WOFF2 · WOFF · TTF · OTF · EOT – Mehrfachauswahl moeglich"
+                buttonLabel="Schriftdateien auswaehlen"
+              />
+              {customEntries.length > 0 && (
                 <ul className="flex flex-col gap-2">
                   {customEntries.map((entry) => (
                     <li
