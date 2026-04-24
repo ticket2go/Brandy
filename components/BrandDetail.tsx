@@ -9,11 +9,13 @@ import {
   generateIdml,
   suggestIdmlFilename,
   type IdmlColorInput,
+  type IdmlPageSize,
 } from "@/lib/generateIdml";
 
 import BrandRoles from "./BrandRoles";
 import ColorsPanel from "./ColorsPanel";
 import { FigmaIcon, IndesignIcon } from "./ExportIcons";
+import IdmlExportModal from "./IdmlExportModal";
 
 type Brand = {
   id: string;
@@ -58,6 +60,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
   const [savingName, setSavingName] = useState(false);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [exportingIdml, setExportingIdml] = useState(false);
+  const [idmlModalOpen, setIdmlModalOpen] = useState(false);
 
   const loadBrand = useCallback(async () => {
     setLoading(true);
@@ -181,62 +184,72 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     setUploading(false);
   };
 
-  const handleExportIdml = useCallback(async () => {
+  const runIdmlExport = useCallback(
+    async (pageSize: IdmlPageSize) => {
+      if (!brand || exportingIdml) return;
+      setExportingIdml(true);
+      setError(null);
+      try {
+        const { data, error: loadError } = await supabase
+          .from("brand_colors")
+          .select("id, group, name, hex, position")
+          .eq("brand_id", brand.id)
+          .order("position", { ascending: true })
+          .order("created_at", { ascending: true });
+
+        if (loadError) {
+          setError(loadError.message);
+          return;
+        }
+
+        const rows = (data ?? []) as Array<{
+          id: string;
+          group: "print" | "digital";
+          name: string;
+          hex: string;
+          position: number;
+        }>;
+
+        if (rows.length === 0) {
+          setError(
+            "Keine Farben hinterlegt – lege zuerst Print- oder Digital-Farben an."
+          );
+          return;
+        }
+
+        const colors: IdmlColorInput[] = rows.map((row) => ({
+          name: row.name,
+          hex: row.hex,
+          group: row.group,
+        }));
+
+        const blob = await generateIdml({
+          brandName: brand.name,
+          colors,
+          pageSize,
+        });
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = suggestIdmlFilename(brand.name);
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setIdmlModalOpen(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setExportingIdml(false);
+      }
+    },
+    [brand, exportingIdml]
+  );
+
+  const handleOpenIdmlModal = useCallback(() => {
     if (!brand || exportingIdml) return;
-    setExportingIdml(true);
-    setError(null);
-    try {
-      const { data, error: loadError } = await supabase
-        .from("brand_colors")
-        .select("id, group, name, hex, position")
-        .eq("brand_id", brand.id)
-        .order("position", { ascending: true })
-        .order("created_at", { ascending: true });
-
-      if (loadError) {
-        setError(loadError.message);
-        return;
-      }
-
-      const rows = (data ?? []) as Array<{
-        id: string;
-        group: "print" | "digital";
-        name: string;
-        hex: string;
-        position: number;
-      }>;
-
-      if (rows.length === 0) {
-        setError(
-          "Keine Farben hinterlegt – lege zuerst Print- oder Digital-Farben an."
-        );
-        return;
-      }
-
-      const colors: IdmlColorInput[] = rows.map((row) => ({
-        name: row.name,
-        hex: row.hex,
-        group: row.group,
-      }));
-
-      const blob = await generateIdml({
-        brandName: brand.name,
-        colors,
-      });
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = suggestIdmlFilename(brand.name);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setExportingIdml(false);
-    }
+    setIdmlModalOpen(true);
   }, [brand, exportingIdml]);
 
   if (loading) {
@@ -452,7 +465,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           <span className="font-medium uppercase tracking-wider">Export:</span>
           <button
             type="button"
-            onClick={handleExportIdml}
+            onClick={handleOpenIdmlModal}
             disabled={exportingIdml}
             aria-label="Farben als Adobe InDesign (.idml) exportieren"
             title={
@@ -500,6 +513,15 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           )}
         </TabFade>
       </div>
+
+      <IdmlExportModal
+        open={idmlModalOpen}
+        onClose={() => {
+          if (!exportingIdml) setIdmlModalOpen(false);
+        }}
+        onConfirm={(pageSize) => runIdmlExport(pageSize)}
+        busy={exportingIdml}
+      />
     </section>
   );
 }
