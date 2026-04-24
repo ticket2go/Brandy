@@ -39,6 +39,35 @@ export function CreativeCloudIcon({ className }: IconProps) {
   );
 }
 
+export function WebExportsIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 240 234"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      className={className}
+    >
+      <title>Web Exports</title>
+      <path
+        fill="#000000"
+        d="M42.5 0h155C221 0 240 19 240 42.5v149c0 23.5-19 42.5-42.5 42.5h-155C19 234 0 215 0 191.5v-149C0 19 19 0 42.5 0z"
+      />
+      <g
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="10"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="120" cy="117" r="55" />
+        <ellipse cx="120" cy="117" rx="26" ry="55" />
+        <line x1="65" y1="117" x2="175" y2="117" />
+        <line x1="120" y1="62" x2="120" y2="172" />
+      </g>
+    </svg>
+  );
+}
+
 export function FigmaIcon({ className }: IconProps) {
   return (
     <svg
