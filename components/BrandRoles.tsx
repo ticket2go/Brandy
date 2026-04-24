@@ -74,7 +74,7 @@ export default function BrandRoles() {
             <div
               role="tooltip"
               aria-hidden={!isOpen}
-              className={`absolute left-0 top-full z-20 mt-2 min-w-[220px] rounded-xl border border-black/10 bg-white p-3 shadow-lg transition-all duration-200 ${
+              className={`absolute left-0 top-full z-20 mt-2 min-w-[220px] rounded-xl bg-white p-3 shadow-lg transition-all duration-200 ${
                 isOpen
                   ? "pointer-events-auto translate-y-0 opacity-100"
                   : "pointer-events-none -translate-y-1 opacity-0"
