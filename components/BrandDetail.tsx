@@ -14,6 +14,7 @@ import {
 
 import BrandRoles from "./BrandRoles";
 import ColorsPanel from "./ColorsPanel";
+import TypographyPanel from "./TypographyPanel";
 import {
   CreativeCloudIcon,
   FigmaIcon,
@@ -525,7 +526,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
             <ColorsPanel brandId={brand.id} brandName={brand.name} />
           )}
           {activeTab === "typografie" && (
-            <PlaceholderPanel title="Typografie" />
+            <TypographyPanel brandId={brand.id} brandSlug={brand.slug} />
           )}
           {activeTab === "elemente" && <PlaceholderPanel title="Elemente" />}
           {activeTab === "digital" && <PlaceholderPanel title="Digital" />}
