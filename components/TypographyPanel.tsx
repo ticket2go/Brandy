@@ -806,7 +806,12 @@ export default function TypographyPanel({
                     </button>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h4 className="text-lg font-semibold text-black">
+                        <h4
+                          className="text-lg font-semibold text-black"
+                          style={{
+                            fontFamily: `'${cssFamily}', ui-sans-serif, system-ui, sans-serif`,
+                          }}
+                        >
                           {font.family}
                         </h4>
                         <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-black/60">
