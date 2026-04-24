@@ -8,6 +8,8 @@ import {
   type Rgb,
 } from "./color";
 
+export type { Rgb, Cmyk } from "./color";
+
 export type CclibsColorMode = "rgb" | "cmyk" | "lab" | "gray" | "spot";
 
 export type CclibsColor = {
@@ -173,27 +175,82 @@ function normaliseMode(raw: unknown): string {
   return raw.toLowerCase();
 }
 
+function readSpotInfo(
+  obj: UnknownObject
+): { book?: string; name: string } | null {
+  const spotField = obj.spot;
+  if (isObject(spotField)) {
+    const name =
+      typeof spotField.spotColorName === "string"
+        ? spotField.spotColorName
+        : typeof spotField.name === "string"
+          ? spotField.name
+          : typeof spotField.swatchName === "string"
+            ? spotField.swatchName
+            : null;
+    if (!name) return null;
+    const book =
+      typeof spotField.bookName === "string"
+        ? spotField.bookName
+        : typeof spotField.book === "string"
+          ? spotField.book
+          : typeof spotField.library === "string"
+            ? spotField.library
+            : undefined;
+    return { name, book };
+  }
+  return null;
+}
+
 // Eine "Representation" in CC-Libraries hat `mode` + `value`. Wir akzeptieren
 // zusaetzlich flache Strukturen mit `colorSpace` oder direkten RGB/CMYK-Feldern.
+// Laut Spec: { "color": { "mode": "CMYK", "value": {...}, "spot": {...} } }
 function parseRepresentation(
   obj: UnknownObject
 ): NormalisedRepresentation | null {
   const modeRaw = normaliseMode(obj.mode ?? obj.colorSpace ?? obj.space);
   const value = obj.value;
+  const spot = readSpotInfo(obj);
+
+  if (!modeRaw) {
+    // Ohne `mode` koennen wir keine zuverlaessige Repraesentation ableiten.
+    // Ausnahme: `type: "spot"` mit `alternate`-Struktur (aelteres Format).
+    if (obj.type === "spot" || obj.colorType === "spot") {
+      const fallback = obj.alternate ?? obj.alternateValue;
+      if (isObject(fallback)) {
+        const inner = parseRepresentation(fallback);
+        if (inner && spot) {
+          return { ...inner, mode: "spot", spot };
+        }
+      }
+    }
+    return null;
+  }
+
+  const applySpot = (
+    rep: NormalisedRepresentation
+  ): NormalisedRepresentation =>
+    spot ? { ...rep, mode: "spot", spot } : rep;
 
   if (modeRaw === "rgb" || modeRaw === "srgb") {
     const rgb = readRgbValue(value ?? obj);
-    if (rgb) return { mode: "rgb", rgb };
+    if (rgb) return applySpot({ mode: "rgb", rgb });
   }
 
   if (modeRaw === "cmyk") {
     const cmyk = readCmykValue(value ?? obj);
-    if (cmyk) return { mode: "cmyk", rgb: cmykToRgb(cmyk), cmyk };
+    if (cmyk)
+      return applySpot({ mode: "cmyk", rgb: cmykToRgb(cmyk), cmyk });
   }
 
   if (modeRaw === "lab") {
     const lab = readLabValue(value ?? obj);
-    if (lab) return { mode: "lab", rgb: labToRgb(lab.l, lab.a, lab.b), lab };
+    if (lab)
+      return applySpot({
+        mode: "lab",
+        rgb: labToRgb(lab.l, lab.a, lab.b),
+        lab,
+      });
   }
 
   if (modeRaw === "gray" || modeRaw === "grayscale") {
@@ -202,27 +259,38 @@ function parseRepresentation(
     );
     if (g !== null) {
       const v = normaliseRgbChannel(g);
-      return { mode: "gray", rgb: { r: v, g: v, b: v } };
+      return applySpot({ mode: "gray", rgb: { r: v, g: v, b: v } });
     }
   }
 
-  if (obj.type === "spot" || obj.colorType === "spot") {
-    const name =
-      typeof obj.swatchName === "string"
-        ? obj.swatchName
-        : typeof obj.name === "string"
-          ? obj.name
-          : "";
-    const book = typeof obj.book === "string" ? obj.book : undefined;
-    const alternate = obj.alternate ?? obj.alternateValue;
-    if (isObject(alternate)) {
-      const inner = parseRepresentation(alternate);
-      if (inner)
-        return {
-          ...inner,
-          mode: "spot",
-          spot: { book, name },
-        };
+  if (modeRaw === "hsb" || modeRaw === "hsv") {
+    // HSB/HSV: h in 0-360, s/b in 0-1 oder 0-100
+    const hsb = isObject(value) ? value : obj;
+    const h = asNumber(hsb.h ?? hsb.hue);
+    const sRaw = asNumber(hsb.s ?? hsb.saturation);
+    const bRaw = asNumber(hsb.b ?? hsb.v ?? hsb.brightness);
+    if (h !== null && sRaw !== null && bRaw !== null) {
+      const s = sRaw > 1 ? sRaw / 100 : sRaw;
+      const br = bRaw > 1 ? bRaw / 100 : bRaw;
+      const c = br * s;
+      const hp = (((h % 360) + 360) % 360) / 60;
+      const x = c * (1 - Math.abs((hp % 2) - 1));
+      let r1 = 0,
+        g1 = 0,
+        b1 = 0;
+      if (hp < 1) [r1, g1, b1] = [c, x, 0];
+      else if (hp < 2) [r1, g1, b1] = [x, c, 0];
+      else if (hp < 3) [r1, g1, b1] = [0, c, x];
+      else if (hp < 4) [r1, g1, b1] = [0, x, c];
+      else if (hp < 5) [r1, g1, b1] = [x, 0, c];
+      else [r1, g1, b1] = [c, 0, x];
+      const m = br - c;
+      const rgb: Rgb = {
+        r: clamp(Math.round((r1 + m) * 255), 0, 255),
+        g: clamp(Math.round((g1 + m) * 255), 0, 255),
+        b: clamp(Math.round((b1 + m) * 255), 0, 255),
+      };
+      return applySpot({ mode: "rgb", rgb });
     }
   }
 
@@ -291,6 +359,56 @@ function colorKey(color: CclibsColor): string {
   return `rgb:${base}`;
 }
 
+// CC-Library-Exports sind DCX/UCF-Container. Representations werden oft als
+// reine UUID-Dateien ohne Extension gespeichert. Wir muessen deshalb jeden
+// Entry potenziell als JSON betrachten und nicht nur `.json`-Dateien.
+const MAX_TEXT_SIZE = 4 * 1024 * 1024; // 4 MiB pro Datei
+const BINARY_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "tiff",
+  "tif",
+  "svg",
+  "pdf",
+  "psd",
+  "ai",
+  "indd",
+  "mp4",
+  "mov",
+  "webm",
+  "zip",
+  "otf",
+  "ttf",
+  "woff",
+  "woff2",
+  "eot",
+  "icc",
+  "icm",
+]);
+
+function looksBinary(name: string): boolean {
+  const lastSegment = name.split("/").pop() ?? name;
+  const dot = lastSegment.lastIndexOf(".");
+  if (dot === -1) return false;
+  const ext = lastSegment.slice(dot + 1).toLowerCase();
+  return BINARY_EXTENSIONS.has(ext);
+}
+
+function tryJsonParse(text: string): unknown | null {
+  const trimmed = text.trimStart();
+  if (trimmed.length === 0) return null;
+  const first = trimmed[0];
+  if (first !== "{" && first !== "[") return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
 export async function parseCclibsFile(file: File): Promise<CclibsColor[]> {
   if (file.size === 0) throw new Error("Datei ist leer.");
   // CC-Library-Exports kommen mit .cclibs oder .cclib; beide sind ZIP-Container.
@@ -307,30 +425,154 @@ export async function parseCclibsFile(file: File): Promise<CclibsColor[]> {
   const colors: CclibsColor[] = [];
   const seen = new Set<string>();
 
-  const jsonEntries = Object.values(zip.files).filter(
-    (entry) => !entry.dir && /\.json$/i.test(entry.name)
+  const entries = Object.values(zip.files).filter(
+    (entry) => !entry.dir && !looksBinary(entry.name)
   );
 
-  for (const entry of jsonEntries) {
+  // 1. Alle Files laden und als JSON parsen (soweit moeglich).
+  const parsedFiles: Array<{ path: string; data: unknown }> = [];
+  for (const entry of entries) {
     let text: string;
     try {
       text = await entry.async("string");
     } catch {
       continue;
     }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      continue;
-    }
-    walkJson(parsed, [], (color) => {
+    if (text.length > MAX_TEXT_SIZE) continue;
+    const parsed = tryJsonParse(text);
+    if (parsed === null) continue;
+    parsedFiles.push({ path: entry.name, data: parsed });
+  }
+
+  // 2. Element-Manifeste einsammeln: mappe Representation-Path -> Element-Name.
+  const nameByRefPath = new Map<string, string>();
+  for (const { path, data } of parsedFiles) {
+    collectElementNames(data, nameByRefPath, path);
+  }
+
+  // 3. Farben extrahieren. Wenn der Walker keinen Namen findet, den Namen aus
+  // dem Element-Manifest verwenden, das auf diese Datei zeigt.
+  for (const { path, data } of parsedFiles) {
+    const fallbackName = findFallbackNameForPath(path, nameByRefPath);
+    walkJson(data, [], (color) => {
       const key = colorKey(color);
       if (seen.has(key)) return;
       seen.add(key);
-      colors.push(color);
+      const useFallback =
+        (!color.name ||
+          color.name === "Farbe" ||
+          color.name.startsWith("Farbe")) &&
+        fallbackName;
+      if (useFallback) {
+        colors.push({ ...color, name: fallbackName });
+      } else {
+        colors.push(color);
+      }
     });
   }
 
+  if (colors.length === 0) {
+    if (parsedFiles.length === 0) {
+      throw new Error(
+        "Keine JSON-Daten im Archiv gefunden. Moeglicherweise liegt ein anderes Format vor."
+      );
+    }
+    // Diagnosis: welche Top-Level-Strukturen wurden gefunden?
+    const hints = new Set<string>();
+    for (const { data } of parsedFiles) {
+      collectHints(data, hints, 0);
+      if (hints.size > 20) break;
+    }
+    const hintText = Array.from(hints).slice(0, 10).join(", ");
+    throw new Error(
+      `Keine Farb-Repraesentationen gefunden (${parsedFiles.length} JSON-Dateien geprueft).` +
+        (hintText ? ` Gefundene Schluessel: ${hintText}.` : "")
+    );
+  }
+
   return colors;
+}
+
+function collectHints(
+  data: unknown,
+  hints: Set<string>,
+  depth: number
+): void {
+  if (depth > 3) return;
+  if (Array.isArray(data)) {
+    for (const entry of data.slice(0, 5)) collectHints(entry, hints, depth + 1);
+    return;
+  }
+  if (!isObject(data)) return;
+  for (const key of Object.keys(data)) {
+    hints.add(key);
+    if (hints.size > 30) return;
+  }
+  for (const value of Object.values(data).slice(0, 10)) {
+    collectHints(value, hints, depth + 1);
+  }
+}
+
+function collectElementNames(
+  data: unknown,
+  map: Map<string, string>,
+  originPath: string
+): void {
+  const stack: unknown[] = [data];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (Array.isArray(node)) {
+      for (const entry of node) stack.push(entry);
+      continue;
+    }
+    if (!isObject(node)) continue;
+
+    const name = typeof node.name === "string" ? node.name.trim() : "";
+    const representations = node.representations;
+    if (name && Array.isArray(representations)) {
+      for (const rep of representations) {
+        if (!isObject(rep)) continue;
+        const path =
+          typeof rep.path === "string"
+            ? rep.path
+            : typeof rep.href === "string"
+              ? rep.href
+              : typeof rep.componentId === "string"
+                ? rep.componentId
+                : null;
+        if (path) {
+          map.set(normalisePath(path, originPath), name);
+          map.set(path, name);
+        }
+      }
+    }
+
+    for (const value of Object.values(node)) stack.push(value);
+  }
+}
+
+function normalisePath(refPath: string, originPath: string): string {
+  // Relative Referenzen relativ zum Manifest aufloesen (best effort).
+  if (refPath.startsWith("/")) return refPath.slice(1);
+  const originDir = originPath.includes("/")
+    ? originPath.slice(0, originPath.lastIndexOf("/") + 1)
+    : "";
+  return `${originDir}${refPath}`;
+}
+
+function findFallbackNameForPath(
+  path: string,
+  map: Map<string, string>
+): string | undefined {
+  if (map.has(path)) return map.get(path);
+  // Manche Exports verwenden einen Komponenten-Ordner je Element; wir matchen
+  // per Komponenten-ID (Dateiname ohne Extension oder letztes Pfadsegment).
+  const segments = path.split("/").filter(Boolean);
+  for (let i = segments.length; i > 0; i -= 1) {
+    const subpath = segments.slice(0, i).join("/");
+    if (map.has(subpath)) return map.get(subpath);
+  }
+  const lastSeg = segments[segments.length - 1];
+  if (lastSeg && map.has(lastSeg)) return map.get(lastSeg);
+  return undefined;
 }
