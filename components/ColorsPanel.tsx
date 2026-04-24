@@ -5,9 +5,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 
 import AddCategoryDialog from "./AddCategoryDialog";
-import AddColorDialog from "./AddColorDialog";
 import AddColorSwatch from "./AddColorSwatch";
+import ColorEditorModal, {
+  type ColorEditorInitial,
+  type ColorEditorSubmit,
+  type EditorCategory,
+} from "./ColorEditorModal";
 import ColorSwatch, { type ColorSwatchData } from "./ColorSwatch";
+import ConfirmDialog from "./ConfirmDialog";
 
 type Group = "print" | "digital";
 
@@ -67,8 +72,17 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     { print: null, digital: null }
   );
 
-  const [addColorGroup, setAddColorGroup] = useState<Group | null>(null);
   const [addCategoryGroup, setAddCategoryGroup] = useState<Group | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
+  const [deletingCategory, setDeletingCategory] = useState(false);
+
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorMode, setEditorMode] = useState<"add" | "edit">("add");
+  const [editorGroup, setEditorGroup] = useState<Group>("print");
+  const [editorInitial, setEditorInitial] = useState<ColorEditorInitial | undefined>(
+    undefined
+  );
+  const [editorColorId, setEditorColorId] = useState<string | null>(null);
 
   const overlayRef = useRef<HTMLDivElement | null>(null);
 
@@ -194,55 +208,162 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     }
   };
 
-  const handleAddColor = async (payload: {
-    name: string;
-    hex: string;
-    values: Record<string, string>;
-  }) => {
-    if (!addColorGroup) return;
-    const group = addColorGroup;
-    const nextPosition =
-      (colors
-        .filter((c) => c.group === group)
-        .reduce((max, c) => Math.max(max, c.position), -1) || 0) + 1;
+  const handleDeleteCategory = async () => {
+    if (!categoryToDelete || deletingCategory) return;
+    setDeletingCategory(true);
+    const { error: deleteError } = await supabase
+      .from("brand_color_categories")
+      .delete()
+      .eq("id", categoryToDelete.id);
+    if (deleteError) {
+      setError(deleteError.message);
+      setDeletingCategory(false);
+      return;
+    }
+    const deletedId = categoryToDelete.id;
+    const deletedGroup = categoryToDelete.group;
+    setCategories((prev) => prev.filter((c) => c.id !== deletedId));
+    setValues((prev) => prev.filter((v) => v.category_id !== deletedId));
+    setActiveFilter((prev) => {
+      if (prev[deletedGroup] !== deletedId) return prev;
+      const remaining = categories
+        .filter((c) => c.group === deletedGroup && c.id !== deletedId)
+        .sort((a, b) => a.position - b.position);
+      return { ...prev, [deletedGroup]: remaining[0]?.id ?? null };
+    });
+    setCategoryToDelete(null);
+    setDeletingCategory(false);
+  };
 
-    const { data: colorData, error: colorError } = await supabase
-      .from("brand_colors")
-      .insert({
-        brand_id: brandId,
-        group,
-        name: payload.name,
-        hex: payload.hex,
-        position: nextPosition,
-      })
-      .select("id, brand_id, group, name, hex, position")
-      .single();
+  const openAddColor = (group: Group) => {
+    setEditorMode("add");
+    setEditorGroup(group);
+    setEditorColorId(null);
+    setEditorInitial(undefined);
+    setEditorOpen(true);
+  };
 
-    if (colorError) throw new Error(colorError.message);
-    if (!colorData) return;
+  const openEditColor = (group: Group, colorId: string) => {
+    const color = colors.find((c) => c.id === colorId);
+    if (!color) return;
+    const currentCatId = activeFilter[group];
+    if (!currentCatId) return;
+    const cat = categories.find((c) => c.id === currentCatId);
+    if (!cat) return;
+    const storedValue =
+      valuesByColor.get(color.id)?.get(currentCatId) ??
+      defaultValueFor(cat, color);
+    setEditorMode("edit");
+    setEditorGroup(group);
+    setEditorColorId(color.id);
+    setEditorInitial({
+      name: color.name,
+      hex: color.hex,
+      categoryId: currentCatId,
+      value: storedValue,
+    });
+    setEditorOpen(true);
+  };
 
-    const createdColor = colorData as Color;
-    const valueRows = Object.entries(payload.values)
-      .filter(([, val]) => val.trim().length > 0)
-      .map(([categoryId, val]) => ({
-        color_id: createdColor.id,
-        category_id: categoryId,
-        value: val.trim(),
-      }));
+  const handleEditorSubmit = async (payload: ColorEditorSubmit) => {
+    if (editorMode === "add") {
+      const group = editorGroup;
+      const nextPosition =
+        (colors
+          .filter((c) => c.group === group)
+          .reduce((max, c) => Math.max(max, c.position), -1) || 0) + 1;
 
-    let insertedValues: ColorValue[] = [];
-    if (valueRows.length > 0) {
+      const { data: colorData, error: colorError } = await supabase
+        .from("brand_colors")
+        .insert({
+          brand_id: brandId,
+          group,
+          name: payload.name,
+          hex: payload.hex,
+          position: nextPosition,
+        })
+        .select("id, brand_id, group, name, hex, position")
+        .single();
+      if (colorError) throw new Error(colorError.message);
+      if (!colorData) return;
+      const createdColor = colorData as Color;
+
       const { data: valueData, error: valueError } = await supabase
         .from("brand_color_values")
-        .insert(valueRows)
-        .select("id, color_id, category_id, value");
+        .insert({
+          color_id: createdColor.id,
+          category_id: payload.categoryId,
+          value: payload.value,
+        })
+        .select("id, color_id, category_id, value")
+        .single();
       if (valueError) throw new Error(valueError.message);
-      insertedValues = (valueData ?? []) as ColorValue[];
+
+      setColors((prev) => [...prev, createdColor]);
+      if (valueData) setValues((prev) => [...prev, valueData as ColorValue]);
+      return;
     }
 
-    setColors((prev) => [...prev, createdColor]);
-    setValues((prev) => [...prev, ...insertedValues]);
+    // edit
+    if (!editorColorId) return;
+    const existingValue = values.find(
+      (v) =>
+        v.color_id === editorColorId && v.category_id === payload.categoryId
+    );
+
+    if (existingValue) {
+      const { data: updated, error: updateError } = await supabase
+        .from("brand_color_values")
+        .update({ value: payload.value })
+        .eq("id", existingValue.id)
+        .select("id, color_id, category_id, value")
+        .single();
+      if (updateError) throw new Error(updateError.message);
+      if (updated) {
+        setValues((prev) =>
+          prev.map((v) => (v.id === updated.id ? (updated as ColorValue) : v))
+        );
+      }
+    } else {
+      const { data: inserted, error: insertError } = await supabase
+        .from("brand_color_values")
+        .insert({
+          color_id: editorColorId,
+          category_id: payload.categoryId,
+          value: payload.value,
+        })
+        .select("id, color_id, category_id, value")
+        .single();
+      if (insertError) throw new Error(insertError.message);
+      if (inserted) setValues((prev) => [...prev, inserted as ColorValue]);
+    }
+
+    // Update base hex if changed
+    const currentColor = colors.find((c) => c.id === editorColorId);
+    if (currentColor && currentColor.hex.toUpperCase() !== payload.hex.toUpperCase()) {
+      const { data: updatedColor, error: updateHexError } = await supabase
+        .from("brand_colors")
+        .update({ hex: payload.hex })
+        .eq("id", editorColorId)
+        .select("id, brand_id, group, name, hex, position")
+        .single();
+      if (updateHexError) throw new Error(updateHexError.message);
+      if (updatedColor) {
+        setColors((prev) =>
+          prev.map((c) =>
+            c.id === updatedColor.id ? (updatedColor as Color) : c
+          )
+        );
+      }
+    }
   };
+
+  const editorCategories: EditorCategory[] = useMemo(() => {
+    return categories
+      .filter((c) => c.group === editorGroup)
+      .sort((a, b) => a.position - b.position)
+      .map((c) => ({ id: c.id, key: c.key, label: c.label }));
+  }, [categories, editorGroup]);
 
   return (
     <>
@@ -280,17 +401,20 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
           const activeCategory =
             groupCategories.find((c) => c.id === activeCategoryId) ?? null;
 
-          const swatchData: ColorSwatchData[] = activeCategory
+          const swatchData = activeCategory
             ? groupColors.map((color) => {
                 const stored = valuesByColor
                   .get(color.id)
                   ?.get(activeCategory.id);
                 const value = stored ?? defaultValueFor(activeCategory, color);
                 return {
-                  name: color.name,
-                  hex: color.hex,
-                  code: value,
-                  codeLabel: activeCategory.label,
+                  id: color.id,
+                  data: {
+                    name: color.name,
+                    hex: color.hex,
+                    code: value,
+                    codeLabel: activeCategory.label,
+                  } as ColorSwatchData,
                 };
               })
             : [];
@@ -314,25 +438,54 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
                 {groupCategories.map((cat) => {
                   const isActive = cat.id === activeCategoryId;
                   return (
-                    <button
+                    <span
                       key={cat.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={isActive}
-                      onClick={() =>
-                        setActiveFilter((prev) => ({
-                          ...prev,
-                          [group]: cat.id,
-                        }))
-                      }
-                      className={`rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-widest transition ${
-                        isActive
-                          ? "bg-black text-white"
-                          : "bg-black/85 text-white/70 hover:bg-black hover:text-white"
-                      }`}
+                      className="group/pill relative inline-flex items-center"
                     >
-                      {cat.label}
-                    </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={isActive}
+                        onClick={() =>
+                          setActiveFilter((prev) => ({
+                            ...prev,
+                            [group]: cat.id,
+                          }))
+                        }
+                        className={`rounded-full px-3 py-1 pr-6 text-[11px] font-medium uppercase tracking-widest transition ${
+                          isActive
+                            ? "bg-black text-white"
+                            : "bg-black/85 text-white/70 hover:bg-black hover:text-white"
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setCategoryToDelete(cat);
+                        }}
+                        aria-label={`Kategorie ${cat.label} loeschen`}
+                        title="Kategorie loeschen"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full text-white/60 opacity-0 transition group-hover/pill:opacity-100 hover:bg-white/15 hover:text-white focus:opacity-100 focus:outline-none"
+                      >
+                        <svg
+                          width="8"
+                          height="8"
+                          viewBox="0 0 8 8"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M1.5 1.5L6.5 6.5M6.5 1.5L1.5 6.5"
+                            stroke="currentColor"
+                            strokeWidth="1.25"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </button>
+                    </span>
                   );
                 })}
                 <button
@@ -361,18 +514,16 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
 
               <div className="flex flex-wrap gap-4">
                 {!loading &&
-                  swatchData.map((color) => (
+                  swatchData.map((entry) => (
                     <ColorSwatch
-                      key={`${group}-${activeCategoryId}-${color.hex}-${color.name}`}
-                      {...color}
+                      key={`${group}-${activeCategoryId}-${entry.id}`}
+                      {...entry.data}
                       onHoverChange={setHoveredColor}
-                      onEdit={() => {
-                        // TODO: Farbe bearbeiten
-                      }}
+                      onEdit={() => openEditColor(group, entry.id)}
                     />
                   ))}
                 {!loading && (
-                  <AddColorSwatch onAdd={() => setAddColorGroup(group)} />
+                  <AddColorSwatch onAdd={() => openAddColor(group)} />
                 )}
                 {loading && (
                   <p className="text-sm text-black/50">Lade Farben …</p>
@@ -390,15 +541,31 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
         onSubmit={handleAddCategory}
       />
 
-      <AddColorDialog
-        open={addColorGroup !== null}
-        group={addColorGroup ?? "print"}
-        categories={categories
-          .filter((c) => c.group === addColorGroup)
-          .sort((a, b) => a.position - b.position)
-          .map((c) => ({ id: c.id, label: c.label }))}
-        onClose={() => setAddColorGroup(null)}
-        onSubmit={handleAddColor}
+      <ColorEditorModal
+        open={editorOpen}
+        mode={editorMode}
+        group={editorGroup}
+        categories={editorCategories}
+        initial={editorInitial}
+        onClose={() => setEditorOpen(false)}
+        onSubmit={handleEditorSubmit}
+      />
+
+      <ConfirmDialog
+        open={categoryToDelete !== null}
+        title="Kategorie loeschen?"
+        description={
+          categoryToDelete
+            ? `Die Kategorie „${categoryToDelete.label}" und alle zugehoerigen Werte werden entfernt.`
+            : undefined
+        }
+        confirmLabel="Loeschen"
+        cancelLabel="Abbrechen"
+        busy={deletingCategory}
+        onConfirm={handleDeleteCategory}
+        onCancel={() => {
+          if (!deletingCategory) setCategoryToDelete(null);
+        }}
       />
     </>
   );
