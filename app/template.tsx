@@ -19,6 +19,11 @@ export default function Template({ children }: { children: React.ReactNode }) {
           y: 0,
           duration: 0.5,
           ease: "power2.out",
+          // filter/transform auf Ancestor-Elementen koppeln position: fixed an
+          // diesen Container (statt an den Viewport). Nach dem Intro deshalb
+          // komplett zurücksetzen, damit Modals wieder mittig im Viewport
+          // liegen und nicht beim Scrollen mitwandern.
+          clearProps: "filter,transform,opacity",
         }
       );
     };

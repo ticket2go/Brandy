@@ -27,6 +27,18 @@ export function IndesignIcon({ className }: IconProps) {
   );
 }
 
+export function CreativeCloudIcon({ className }: IconProps) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/creative-cloud.svg"
+      alt="Adobe Creative Cloud"
+      aria-hidden="true"
+      className={className}
+    />
+  );
+}
+
 export function FigmaIcon({ className }: IconProps) {
   return (
     <svg

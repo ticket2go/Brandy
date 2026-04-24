@@ -124,22 +124,6 @@ export default function BrandCard({
             Brand
           </span>
         </div>
-
-        {swatches.length > 0 && (
-          <div
-            aria-label="Brand-Farben"
-            className="flex shrink-0 items-center gap-1.5"
-          >
-            {swatches.map((hex, idx) => (
-              <span
-                key={`${hex}-${idx}`}
-                className="h-3 w-3 rounded-full"
-                style={{ backgroundColor: hex }}
-                title={hex}
-              />
-            ))}
-          </div>
-        )}
       </footer>
     </article>
   );
