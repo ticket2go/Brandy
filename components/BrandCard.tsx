@@ -1,12 +1,31 @@
 import Link from "next/link";
 
+import { supabase } from "@/lib/supabase/client";
+
+const STORAGE_BUCKET = "brand-assets";
+
 type BrandCardProps = {
   name: string;
   slug: string;
+  logoUrl?: string | null;
   onDelete?: () => void;
 };
 
-export default function BrandCard({ name, slug, onDelete }: BrandCardProps) {
+function resolveLogoSrc(logoUrl: string | null | undefined): string | null {
+  if (!logoUrl) return null;
+  if (logoUrl.startsWith("http")) return logoUrl;
+  const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(logoUrl);
+  return data.publicUrl;
+}
+
+export default function BrandCard({
+  name,
+  slug,
+  logoUrl,
+  onDelete,
+}: BrandCardProps) {
+  const logoSrc = resolveLogoSrc(logoUrl);
+
   return (
     <article className="group relative flex h-40 w-64 shrink-0 flex-col justify-between rounded-2xl border border-black/10 bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
       <Link
@@ -14,6 +33,15 @@ export default function BrandCard({ name, slug, onDelete }: BrandCardProps) {
         aria-label={`Brand "${name}" öffnen`}
         className="absolute inset-0 z-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-black/40"
       />
+
+      {logoSrc && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={logoSrc}
+          alt={`${name} Logo`}
+          className="pointer-events-none absolute left-3 top-3 z-[1] h-9 w-9 rounded-lg border border-black/10 bg-white object-contain p-1"
+        />
+      )}
 
       {onDelete && (
         <button
@@ -44,13 +72,15 @@ export default function BrandCard({ name, slug, onDelete }: BrandCardProps) {
         </button>
       )}
 
-      <header className="pointer-events-none relative z-[1] pr-8">
+      <div aria-hidden className="h-9" />
+
+      <footer className="pointer-events-none relative z-[1] flex flex-col gap-1">
         <h2 className="line-clamp-2 text-xl font-semibold tracking-tight text-black">
           {name}
         </h2>
-      </header>
-      <footer className="pointer-events-none relative z-[1] text-xs uppercase tracking-widest text-black/40">
-        Brand
+        <span className="text-xs uppercase tracking-widest text-black/40">
+          Brand
+        </span>
       </footer>
     </article>
   );

@@ -18,6 +18,7 @@ type Brand = {
   id: string;
   name: string;
   slug: string;
+  logo_url: string | null;
 };
 
 export default function BrandManager() {
@@ -39,7 +40,7 @@ export default function BrandManager() {
     setError(null);
     const { data, error: loadError } = await supabase
       .from("brands")
-      .select("id, name, slug")
+      .select("id, name, slug, logo_url")
       .order("created_at", { ascending: true });
 
     if (loadError) {
@@ -150,7 +151,7 @@ export default function BrandManager() {
     const { data, error: insertError } = await supabase
       .from("brands")
       .insert({ name: trimmed, slug: uniqueSlug })
-      .select("id, name, slug")
+      .select("id, name, slug, logo_url")
       .single();
 
     if (insertError) {
@@ -235,6 +236,7 @@ export default function BrandManager() {
                   key={brand.id}
                   name={brand.name}
                   slug={brand.slug}
+                  logoUrl={brand.logo_url}
                   onDelete={() => setPendingDelete(brand)}
                 />
               ))}
