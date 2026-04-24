@@ -5,27 +5,19 @@ import { useState } from "react";
 export type ColorSwatchData = {
   name: string;
   hex: string;
-  code?: string;
+  code: string;
+  codeLabel?: string;
 };
 
 type ColorSwatchProps = ColorSwatchData & {
   onHoverChange?: (hex: string | null) => void;
 };
 
-function getReadableTextColor(hex: string): "black" | "white" {
-  const normalized = hex.replace("#", "");
-  if (normalized.length !== 6) return "black";
-  const r = parseInt(normalized.slice(0, 2), 16);
-  const g = parseInt(normalized.slice(2, 4), 16);
-  const b = parseInt(normalized.slice(4, 6), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance > 0.6 ? "black" : "white";
-}
-
 export default function ColorSwatch({
   name,
   hex,
   code,
+  codeLabel,
   onHoverChange,
 }: ColorSwatchProps) {
   const [copied, setCopied] = useState(false);
@@ -34,7 +26,7 @@ export default function ColorSwatch({
     event.preventDefault();
     event.stopPropagation();
     try {
-      await navigator.clipboard.writeText(hex);
+      await navigator.clipboard.writeText(code);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     } catch {
@@ -58,7 +50,7 @@ export default function ColorSwatch({
         <button
           type="button"
           onClick={handleCopy}
-          aria-label={`Farbwert ${hex} kopieren`}
+          aria-label={`Farbwert ${code} kopieren`}
           title={copied ? "Kopiert" : "Kopieren"}
           className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-black text-white opacity-0 shadow-md transition-all duration-200 hover:scale-105 hover:bg-black/85 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-white/70 group-hover:opacity-100"
         >
@@ -109,16 +101,15 @@ export default function ColorSwatch({
         <h4 className="text-sm font-bold uppercase tracking-tight text-black">
           {name}
         </h4>
-        {code && (
-          <p className="text-[11px] font-medium uppercase tracking-wider text-black/70">
-            {code}
+        {codeLabel && (
+          <p className="text-[10px] font-medium uppercase tracking-widest text-black/40">
+            {codeLabel}
           </p>
         )}
-        <p className="font-mono text-[11px] text-black/60">{hex.toUpperCase()}</p>
+        <p className="font-mono text-[11px] leading-tight text-black/70">
+          {code}
+        </p>
       </div>
-      <span className="sr-only">
-        Textkontrast: {getReadableTextColor(hex)}
-      </span>
     </article>
   );
 }
