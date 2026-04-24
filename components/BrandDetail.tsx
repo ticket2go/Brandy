@@ -5,6 +5,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { supabase } from "@/lib/supabase/client";
 
+import {
+  generateIdml,
+  suggestIdmlFilename,
+  type IdmlColorInput,
+} from "@/lib/generateIdml";
+
 import BrandRoles from "./BrandRoles";
 import ColorsPanel from "./ColorsPanel";
 import { FigmaIcon, IndesignIcon } from "./ExportIcons";
@@ -51,6 +57,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const [exportingIdml, setExportingIdml] = useState(false);
 
   const loadBrand = useCallback(async () => {
     setLoading(true);
@@ -173,6 +180,64 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     if (fileInputRef.current) fileInputRef.current.value = "";
     setUploading(false);
   };
+
+  const handleExportIdml = useCallback(async () => {
+    if (!brand || exportingIdml) return;
+    setExportingIdml(true);
+    setError(null);
+    try {
+      const { data, error: loadError } = await supabase
+        .from("brand_colors")
+        .select("id, group, name, hex, position")
+        .eq("brand_id", brand.id)
+        .order("position", { ascending: true })
+        .order("created_at", { ascending: true });
+
+      if (loadError) {
+        setError(loadError.message);
+        return;
+      }
+
+      const rows = (data ?? []) as Array<{
+        id: string;
+        group: "print" | "digital";
+        name: string;
+        hex: string;
+        position: number;
+      }>;
+
+      if (rows.length === 0) {
+        setError(
+          "Keine Farben hinterlegt – lege zuerst Print- oder Digital-Farben an."
+        );
+        return;
+      }
+
+      const colors: IdmlColorInput[] = rows.map((row) => ({
+        name: row.name,
+        hex: row.hex,
+        group: row.group,
+      }));
+
+      const blob = await generateIdml({
+        brandName: brand.name,
+        colors,
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = suggestIdmlFilename(brand.name);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExportingIdml(false);
+    }
+  }, [brand, exportingIdml]);
 
   if (loading) {
     return (
@@ -387,11 +452,24 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           <span className="font-medium uppercase tracking-wider">Export:</span>
           <button
             type="button"
-            aria-label="Export nach Adobe InDesign"
-            title="Export nach Adobe InDesign"
-            className="flex h-6 w-6 items-center justify-center rounded-md transition hover:scale-110 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30"
+            onClick={handleExportIdml}
+            disabled={exportingIdml}
+            aria-label="Farben als Adobe InDesign (.idml) exportieren"
+            title={
+              exportingIdml
+                ? "Erstelle IDML …"
+                : "Farben als Adobe InDesign (.idml) exportieren"
+            }
+            className="flex h-6 w-6 items-center justify-center rounded-md transition hover:scale-110 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <IndesignIcon className="h-5 w-5" />
+            {exportingIdml ? (
+              <span
+                className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black"
+                aria-hidden
+              />
+            ) : (
+              <IndesignIcon className="h-5 w-5" />
+            )}
           </button>
           <button
             type="button"
