@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 
+export type ColorRoleLabel = "primary" | "secondary" | null;
+
 export type ColorSwatchData = {
   name: string;
   hex: string;
   code: string;
   codeLabel?: string;
+  role?: ColorRoleLabel;
 };
 
 
@@ -30,6 +33,7 @@ export default function ColorSwatch({
   hex,
   code,
   codeLabel,
+  role,
   onHoverChange,
   onEdit,
 }: ColorSwatchProps) {
@@ -127,9 +131,27 @@ export default function ColorSwatch({
         </button>
       </div>
       <div className="flex flex-col gap-1 px-3 py-3">
-        <h4 className="text-sm font-bold uppercase tracking-tight text-black">
-          {name}
-        </h4>
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-sm font-bold uppercase tracking-tight text-black">
+            {name}
+          </h4>
+          {role && (
+            <span
+              className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-widest ${
+                role === "primary"
+                  ? "bg-black text-white"
+                  : "bg-black/10 text-black/70"
+              }`}
+              title={
+                role === "primary"
+                  ? "Primaere Farbe (Web/CSS-Export)"
+                  : "Sekundaere Farbe (Web/CSS-Export)"
+              }
+            >
+              {role === "primary" ? "Primary" : "Secondary"}
+            </span>
+          )}
+        </div>
         {codeLabel && (
           <p className="text-[10px] font-medium uppercase tracking-widest text-black/40">
             {codeLabel}

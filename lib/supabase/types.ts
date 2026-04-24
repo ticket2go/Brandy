@@ -121,6 +121,7 @@ export interface Database {
           group: "print" | "digital";
           name: string;
           hex: string;
+          role: "primary" | "secondary" | null;
           position: number;
           created_at: string;
           updated_at: string;
@@ -131,6 +132,7 @@ export interface Database {
           group: "print" | "digital";
           name: string;
           hex: string;
+          role?: "primary" | "secondary" | null;
           position?: number;
           created_at?: string;
           updated_at?: string;
@@ -141,6 +143,7 @@ export interface Database {
           group?: "print" | "digital";
           name?: string;
           hex?: string;
+          role?: "primary" | "secondary" | null;
           position?: number;
           created_at?: string;
           updated_at?: string;
