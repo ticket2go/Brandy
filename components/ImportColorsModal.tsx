@@ -77,7 +77,10 @@ type PreparedRow = {
   spot?: { book?: string; name: string };
   mode: ImportColorItem["mode"];
   count?: number;
+  group?: string;
 };
+
+const ALL_GROUPS = "__ALL__";
 
 function modeBadge(mode: ImportColorItem["mode"]): string {
   switch (mode) {
@@ -107,6 +110,7 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
   const [parsingFile, setParsingFile] = useState(false);
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
   const [hideNeutrals, setHideNeutrals] = useState(false);
+  const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -123,6 +127,7 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
       setParsingFile(false);
       setRowState({});
       setHideNeutrals(false);
+      setGroupFilter(ALL_GROUPS);
     }
   }, [open]);
 
@@ -154,6 +159,7 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
       if (c.cmyk) parts.push(formatCmyk(c.cmyk));
       else parts.push(c.hex.toUpperCase());
       if (c.spot?.book) parts.push(c.spot.book);
+      if (c.group) parts.push(c.group);
       return {
         key: `file-${idx}-${c.hex}-${c.mode}`,
         hex: c.hex,
@@ -164,17 +170,31 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
         cmyk: c.cmyk,
         spot: c.spot,
         mode: c.mode,
+        group: c.group,
       };
     });
   }, [tab, urlResults, fileResults]);
 
+  const groupOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of rows) {
+      if (row.group) set.add(row.group);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "de"));
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
-    if (!hideNeutrals) return rows;
     return rows.filter((row) => {
-      const l = luminance(row.hex);
-      return l > 0.02 && l < 0.98;
+      if (hideNeutrals) {
+        const l = luminance(row.hex);
+        if (!(l > 0.02 && l < 0.98)) return false;
+      }
+      if (groupFilter !== ALL_GROUPS) {
+        if ((row.group ?? "") !== groupFilter) return false;
+      }
+      return true;
     });
-  }, [rows, hideNeutrals]);
+  }, [rows, hideNeutrals, groupFilter]);
 
   const selectedCount = useMemo(
     () => filteredRows.filter((row) => rowState[row.key]?.selected).length,
@@ -493,12 +513,31 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-black/60">
               <span>
                 {rows.length} Farben gefunden
-                {hideNeutrals && rows.length !== filteredRows.length
+                {rows.length !== filteredRows.length
                   ? ` (${filteredRows.length} sichtbar)`
                   : ""}
                 · {selectedCount} ausgewaehlt
               </span>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {tab === "file" && groupOptions.length > 0 && (
+                  <label className="flex items-center gap-1">
+                    <span className="text-black/50">Kategorie</span>
+                    <select
+                      value={groupFilter}
+                      onChange={(event) => {
+                        setGroupFilter(event.target.value);
+                      }}
+                      className="rounded-md border border-black/15 bg-white px-2 py-1 text-[11px] font-medium text-black/80 outline-none focus:border-black"
+                    >
+                      <option value={ALL_GROUPS}>Alle</option>
+                      {groupOptions.map((g) => (
+                        <option key={g} value={g}>
+                          {g}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <label className="flex items-center gap-1">
                   <input
                     type="checkbox"

@@ -20,6 +20,7 @@ export type CclibsColor = {
   lab?: { l: number; a: number; b: number };
   spot?: { book?: string; name: string };
   mode: CclibsColorMode;
+  group?: string;
 };
 
 type UnknownObject = Record<string, unknown>;
@@ -444,16 +445,15 @@ export async function parseCclibsFile(file: File): Promise<CclibsColor[]> {
     parsedFiles.push({ path: entry.name, data: parsed });
   }
 
-  // 2. Element-Manifeste einsammeln: mappe Representation-Path -> Element-Name.
-  const nameByRefPath = new Map<string, string>();
-  for (const { path, data } of parsedFiles) {
-    collectElementNames(data, nameByRefPath, path);
-  }
+  // 2. Element-Manifeste einsammeln:
+  //    - Representation-Path -> Element-Name
+  //    - Element-Id -> Name, Element-Id -> Group-Id, Group-Id -> Group-Name
+  const elementIndex = buildElementIndex(parsedFiles);
 
   // 3. Farben extrahieren. Wenn der Walker keinen Namen findet, den Namen aus
   // dem Element-Manifest verwenden, das auf diese Datei zeigt.
   for (const { path, data } of parsedFiles) {
-    const fallbackName = findFallbackNameForPath(path, nameByRefPath);
+    const context = resolveContextForPath(path, elementIndex);
     walkJson(data, [], (color) => {
       const key = colorKey(color);
       if (seen.has(key)) return;
@@ -462,12 +462,13 @@ export async function parseCclibsFile(file: File): Promise<CclibsColor[]> {
         (!color.name ||
           color.name === "Farbe" ||
           color.name.startsWith("Farbe")) &&
-        fallbackName;
-      if (useFallback) {
-        colors.push({ ...color, name: fallbackName });
-      } else {
-        colors.push(color);
-      }
+        context.name;
+      const finalColor: CclibsColor = {
+        ...color,
+        name: useFallback ? context.name! : color.name,
+        group: context.group ?? color.group,
+      };
+      colors.push(finalColor);
     });
   }
 
@@ -513,46 +514,133 @@ function collectHints(
   }
 }
 
-function collectElementNames(
-  data: unknown,
-  map: Map<string, string>,
-  originPath: string
-): void {
-  const stack: unknown[] = [data];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (Array.isArray(node)) {
-      for (const entry of node) stack.push(entry);
-      continue;
-    }
-    if (!isObject(node)) continue;
+type ElementIndex = {
+  // Pfade der Representations -> Element-Id
+  idByPath: Map<string, string>;
+  // Element-Id -> Anzeigename
+  nameById: Map<string, string>;
+  // Element-Id -> Group-Id
+  groupIdByElementId: Map<string, string>;
+  // Group-Id -> Group-Name
+  groupNameById: Map<string, string>;
+  // Fallback: Pfade -> Name (wenn keine Id aufgeloest werden konnte)
+  nameByPath: Map<string, string>;
+};
 
-    const name = typeof node.name === "string" ? node.name.trim() : "";
-    const representations = node.representations;
-    if (name && Array.isArray(representations)) {
-      for (const rep of representations) {
-        if (!isObject(rep)) continue;
-        const path =
-          typeof rep.path === "string"
-            ? rep.path
-            : typeof rep.href === "string"
-              ? rep.href
-              : typeof rep.componentId === "string"
-                ? rep.componentId
-                : null;
-        if (path) {
-          map.set(normalisePath(path, originPath), name);
-          map.set(path, name);
+function buildElementIndex(
+  parsedFiles: Array<{ path: string; data: unknown }>
+): ElementIndex {
+  const idx: ElementIndex = {
+    idByPath: new Map(),
+    nameById: new Map(),
+    groupIdByElementId: new Map(),
+    groupNameById: new Map(),
+    nameByPath: new Map(),
+  };
+
+  // Durchwandere alle JSONs und sammle Element-Knoten ein.
+  // CC Library Elemente haben `id` oder `elementId` + `name` + `representations`
+  // oder (fuer Gruppen) `children`.
+  for (const { path: originPath, data } of parsedFiles) {
+    const stack: unknown[] = [data];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (Array.isArray(node)) {
+        for (const entry of node) stack.push(entry);
+        continue;
+      }
+      if (!isObject(node)) continue;
+
+      const typeField =
+        typeof node.type === "string" ? node.type.toLowerCase() : "";
+      const id =
+        typeof node.id === "string"
+          ? node.id
+          : typeof node.elementId === "string"
+            ? node.elementId
+            : typeof node.compId === "string"
+              ? node.compId
+              : "";
+      const name =
+        typeof node.name === "string" ? node.name.trim() : "";
+
+      const isGroup = /vnd\.adobe\.element\.group/.test(typeField);
+
+      if (isGroup && id && name) {
+        idx.groupNameById.set(id, name);
+        // Kinder verweisen oft per id in `children[].id` oder `elements[].id`.
+        const children =
+          (Array.isArray(node.children) ? node.children : null) ??
+          (Array.isArray(node.elements) ? node.elements : null);
+        if (children) {
+          for (const child of children) {
+            let childId: string | null = null;
+            if (typeof child === "string") childId = child;
+            else if (isObject(child)) {
+              const cid =
+                (typeof child.id === "string" && child.id) ||
+                (typeof child.elementId === "string" && child.elementId) ||
+                (typeof child.compId === "string" && child.compId) ||
+                "";
+              if (cid) childId = cid;
+            }
+            if (childId) idx.groupIdByElementId.set(childId, id);
+          }
         }
       }
-    }
 
-    for (const value of Object.values(node)) stack.push(value);
+      if (id && name && !isGroup) idx.nameById.set(id, name);
+
+      // Gruppen-Referenz am Element
+      const parentGroup =
+        (typeof node.parentId === "string" && node.parentId) ||
+        (typeof node.groupId === "string" && node.groupId) ||
+        (typeof node.parent === "string" && node.parent) ||
+        "";
+      if (id && parentGroup) idx.groupIdByElementId.set(id, parentGroup);
+      if (isObject(node.group)) {
+        const gId =
+          (typeof node.group.id === "string" && node.group.id) ||
+          (typeof node.group.elementId === "string" && node.group.elementId) ||
+          "";
+        const gName =
+          typeof node.group.name === "string" ? node.group.name.trim() : "";
+        if (id && gId) idx.groupIdByElementId.set(id, gId);
+        if (gId && gName) idx.groupNameById.set(gId, gName);
+      }
+
+      // Representations mit Pfaden auf Id mappen
+      if (id && Array.isArray(node.representations)) {
+        for (const rep of node.representations) {
+          if (!isObject(rep)) continue;
+          const p =
+            typeof rep.path === "string"
+              ? rep.path
+              : typeof rep.href === "string"
+                ? rep.href
+                : typeof rep.componentId === "string"
+                  ? rep.componentId
+                  : null;
+          if (p) {
+            const abs = normalisePath(p, originPath);
+            idx.idByPath.set(abs, id);
+            idx.idByPath.set(p, id);
+            if (name) {
+              idx.nameByPath.set(abs, name);
+              idx.nameByPath.set(p, name);
+            }
+          }
+        }
+      }
+
+      for (const value of Object.values(node)) stack.push(value);
+    }
   }
+
+  return idx;
 }
 
 function normalisePath(refPath: string, originPath: string): string {
-  // Relative Referenzen relativ zum Manifest aufloesen (best effort).
   if (refPath.startsWith("/")) return refPath.slice(1);
   const originDir = originPath.includes("/")
     ? originPath.slice(0, originPath.lastIndexOf("/") + 1)
@@ -560,19 +648,42 @@ function normalisePath(refPath: string, originPath: string): string {
   return `${originDir}${refPath}`;
 }
 
-function findFallbackNameForPath(
+function resolveContextForPath(
   path: string,
-  map: Map<string, string>
-): string | undefined {
-  if (map.has(path)) return map.get(path);
-  // Manche Exports verwenden einen Komponenten-Ordner je Element; wir matchen
-  // per Komponenten-ID (Dateiname ohne Extension oder letztes Pfadsegment).
-  const segments = path.split("/").filter(Boolean);
-  for (let i = segments.length; i > 0; i -= 1) {
-    const subpath = segments.slice(0, i).join("/");
-    if (map.has(subpath)) return map.get(subpath);
+  idx: ElementIndex
+): { name?: string; group?: string } {
+  // Id anhand Pfad finden
+  let id = idx.idByPath.get(path);
+  if (!id) {
+    const segments = path.split("/").filter(Boolean);
+    for (let i = segments.length; i > 0 && !id; i -= 1) {
+      const subpath = segments.slice(0, i).join("/");
+      id = idx.idByPath.get(subpath);
+    }
+    if (!id) {
+      const lastSeg = segments[segments.length - 1];
+      if (lastSeg) id = idx.idByPath.get(lastSeg);
+    }
   }
-  const lastSeg = segments[segments.length - 1];
-  if (lastSeg && map.has(lastSeg)) return map.get(lastSeg);
-  return undefined;
+
+  let name: string | undefined;
+  if (id) name = idx.nameById.get(id);
+  if (!name) {
+    name = idx.nameByPath.get(path);
+    if (!name) {
+      const segments = path.split("/").filter(Boolean);
+      for (let i = segments.length; i > 0 && !name; i -= 1) {
+        const subpath = segments.slice(0, i).join("/");
+        name = idx.nameByPath.get(subpath);
+      }
+    }
+  }
+
+  let group: string | undefined;
+  if (id) {
+    const groupId = idx.groupIdByElementId.get(id);
+    if (groupId) group = idx.groupNameById.get(groupId);
+  }
+
+  return { name, group };
 }
