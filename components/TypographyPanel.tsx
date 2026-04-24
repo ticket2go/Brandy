@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import JSZip from "jszip";
 
 import { supabase } from "@/lib/supabase/client";
 import { cssFormatName, formatLabel, mimeTypeForFormat } from "@/lib/fontFormat";
@@ -70,6 +71,15 @@ export default function TypographyPanel({
   const [addOpen, setAddOpen] = useState(false);
   const [fontToDelete, setFontToDelete] = useState<BrandFont | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [downloadingFontId, setDownloadingFontId] = useState<string | null>(
+    null
+  );
+  const [exportingFontId, setExportingFontId] = useState<string | null>(null);
+
+  const toggleCollapsed = (fontId: string) => {
+    setCollapsed((prev) => ({ ...prev, [fontId]: !prev[fontId] }));
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -284,6 +294,198 @@ export default function TypographyPanel({
     setFiles((prev) => [...prev, ...uploadedFiles]);
   };
 
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const fetchFileBlob = async (path: string): Promise<ArrayBuffer> => {
+    const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+    const response = await fetch(data.publicUrl);
+    if (!response.ok) {
+      throw new Error(
+        `Datei konnte nicht geladen werden (${response.status}).`
+      );
+    }
+    return response.arrayBuffer();
+  };
+
+  const downloadAllFiles = async (font: BrandFont) => {
+    if (downloadingFontId) return;
+    const fontFiles = filesByFont.get(font.id) ?? [];
+    if (fontFiles.length === 0) return;
+    setDownloadingFontId(font.id);
+    setError(null);
+    try {
+      const zip = new JSZip();
+      const familySlug = sanitizeSegment(font.family);
+      for (const file of fontFiles) {
+        const buffer = await fetchFileBlob(file.storage_path);
+        const fileName = `${file.format.toUpperCase()}/${familySlug}-${file.variant}.${file.format}`;
+        zip.file(fileName, buffer);
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      triggerDownload(blob, `${familySlug}-fonts.zip`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloadingFontId(null);
+    }
+  };
+
+  const exportWebFont = async (font: BrandFont) => {
+    if (exportingFontId) return;
+    const fontFiles = filesByFont.get(font.id) ?? [];
+    if (fontFiles.length === 0) return;
+    setExportingFontId(font.id);
+    setError(null);
+    try {
+      const zip = new JSZip();
+      const familySlug = sanitizeSegment(font.family);
+      const root = zip.folder(`${familySlug}-web`);
+      if (!root) throw new Error("ZIP konnte nicht erstellt werden.");
+
+      // Pro (weight, italic) die beste web-taugliche Datei aussuchen:
+      // woff2 > woff > ttf > otf (eot bewusst ignoriert fuer moderne Browser).
+      const priority: Record<string, number> = {
+        woff2: 0,
+        woff: 1,
+        ttf: 2,
+        otf: 3,
+        eot: 4,
+      };
+      type Picked = {
+        file: BrandFontFile;
+        relPath: string;
+      };
+      const byVariant = new Map<string, BrandFontFile[]>();
+      for (const file of fontFiles) {
+        const key = `${file.weight}-${file.italic ? 1 : 0}`;
+        if (!byVariant.has(key)) byVariant.set(key, []);
+        byVariant.get(key)!.push(file);
+      }
+
+      const picked: Picked[] = [];
+      const extraFormats: Picked[] = [];
+      for (const [, list] of byVariant) {
+        const sorted = list
+          .slice()
+          .sort(
+            (a, b) => (priority[a.format] ?? 99) - (priority[b.format] ?? 99)
+          );
+        const best = sorted[0];
+        const bestRel = `fonts/${familySlug}-${best.variant}.${best.format}`;
+        picked.push({ file: best, relPath: bestRel });
+        for (const other of sorted.slice(1)) {
+          // zusaetzliche Formate als Fallback (woff2 + woff zusammen ist ueblich)
+          const rel = `fonts/${familySlug}-${other.variant}.${other.format}`;
+          extraFormats.push({ file: other, relPath: rel });
+        }
+      }
+
+      // Dateien herunterladen
+      for (const entry of [...picked, ...extraFormats]) {
+        const buffer = await fetchFileBlob(entry.file.storage_path);
+        root.file(entry.relPath, buffer);
+      }
+
+      // @font-face Regeln
+      picked.sort((a, b) => {
+        if (a.file.weight !== b.file.weight) {
+          return a.file.weight - b.file.weight;
+        }
+        return Number(a.file.italic) - Number(b.file.italic);
+      });
+
+      const cssLines: string[] = [];
+      cssLines.push(`/* ${font.family} – Webfont */`);
+      cssLines.push(
+        `/* Einbindung: <link rel="stylesheet" href="${familySlug}.css"> */`
+      );
+      cssLines.push("");
+      for (const entry of picked) {
+        const file = entry.file;
+        // Fallback-Formate fuer dasselbe (weight, italic) einsammeln
+        const fallbacks = extraFormats.filter(
+          (e) =>
+            e.file.weight === file.weight && e.file.italic === file.italic
+        );
+        const sources = [entry, ...fallbacks]
+          .map(
+            (e) =>
+              `       url('./${e.relPath}') format('${cssFormatName(e.file.format)}')`
+          )
+          .join(",\n");
+        cssLines.push("@font-face {");
+        cssLines.push(`  font-family: '${font.family}';`);
+        cssLines.push(`  font-style: ${file.italic ? "italic" : "normal"};`);
+        cssLines.push(`  font-weight: ${file.weight};`);
+        cssLines.push(`  font-display: swap;`);
+        cssLines.push(`  src: ${sources.trimStart()};`);
+        cssLines.push("}");
+        cssLines.push("");
+      }
+
+      const cssContent = cssLines.join("\n");
+      root.file(`${familySlug}.css`, cssContent);
+
+      const readmeLines = [
+        `# ${font.family} – Webfont-Export`,
+        "",
+        "## Inhalt",
+        "",
+        `- \`${familySlug}.css\` – @font-face-Deklarationen`,
+        "- `fonts/` – Schriftdateien (woff2 wird bevorzugt, weitere Formate als Fallback)",
+        "",
+        "## Einbindung",
+        "",
+        "```html",
+        `<link rel="stylesheet" href="${familySlug}.css">`,
+        "```",
+        "",
+        "```css",
+        `body {`,
+        `  font-family: '${font.family}', sans-serif;`,
+        `}`,
+        "```",
+        "",
+      ];
+      if (font.source === "custom") {
+        readmeLines.push(
+          "## Lizenz",
+          "",
+          "Diese Schrift wurde manuell hochgeladen. Stelle sicher, dass die",
+          "Lizenzbedingungen der Schrift die Verwendung als Webfont abdecken,",
+          "bevor du diesen Export ausrollst.",
+          ""
+        );
+      } else {
+        readmeLines.push(
+          "## Lizenz",
+          "",
+          "Google Fonts stehen unter einer freien Lizenz (meist SIL Open Font",
+          "License oder Apache 2.0). Details:",
+          `https://fonts.google.com/specimen/${encodeURIComponent(font.family)}/about`,
+          ""
+        );
+      }
+      root.file("README.md", readmeLines.join("\n"));
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      triggerDownload(blob, `${familySlug}-webfont.zip`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExportingFontId(null);
+    }
+  };
+
   const handleDelete = async () => {
     if (!fontToDelete) return;
     setDeleting(true);
@@ -327,7 +529,7 @@ export default function TypographyPanel({
           </h3>
           <p className="mt-1 text-sm text-black/60">
             Suche Schriften bei Google Fonts oder lade eigene Schriftdateien
-            hoch. Die Lizenz muss fuer jede Schrift bestaetigt werden.
+            hoch. Bei eigenen Dateien muss die Lizenz bestaetigt werden.
           </p>
         </div>
         <button
@@ -390,36 +592,120 @@ export default function TypographyPanel({
 
             const cssFamily = cssFamilyName(font);
 
+            const isCollapsed = collapsed[font.id] === true;
+            const isDownloading = downloadingFontId === font.id;
+            const isExporting = exportingFontId === font.id;
+
             return (
               <article
                 key={font.id}
                 className="flex flex-col gap-5 rounded-2xl border border-black/10 bg-white p-6"
               >
                 <header className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-lg font-semibold text-black">
-                        {font.family}
-                      </h4>
-                      <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-black/60">
-                        {font.source === "google" ? "Google Fonts" : "Eigene Datei"}
-                      </span>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleCollapsed(font.id)}
+                      aria-label={isCollapsed ? "Eintrag ausklappen" : "Eintrag einklappen"}
+                      aria-expanded={!isCollapsed}
+                      className="mt-1 flex h-6 w-6 flex-none items-center justify-center rounded-md text-black/50 transition hover:bg-black/5 hover:text-black"
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 12 12"
+                        aria-hidden="true"
+                        style={{
+                          transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                          transition: "transform 150ms ease-out",
+                        }}
+                      >
+                        <path
+                          d="M3 5l3 3 3-3"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          fill="none"
+                        />
+                      </svg>
+                    </button>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="text-lg font-semibold text-black">
+                          {font.family}
+                        </h4>
+                        <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-black/60">
+                          {font.source === "google" ? "Google Fonts" : "Eigene Datei"}
+                        </span>
+                        <span className="text-[11px] uppercase tracking-widest text-black/40">
+                          {fontFiles.length}{" "}
+                          {fontFiles.length === 1 ? "Datei" : "Dateien"}
+                        </span>
+                      </div>
+                      {font.google_category && (
+                        <p className="text-[11px] uppercase tracking-widest text-black/40">
+                          {font.google_category}
+                        </p>
+                      )}
                     </div>
-                    {font.google_category && (
-                      <p className="text-[11px] uppercase tracking-widest text-black/40">
-                        {font.google_category}
-                      </p>
-                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setFontToDelete(font)}
-                    className="rounded-lg border border-black/15 bg-white px-3 py-1.5 text-xs font-medium text-black/70 hover:bg-red-50 hover:text-red-700"
-                  >
-                    Entfernen
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => downloadAllFiles(font)}
+                      disabled={fontFiles.length === 0 || isDownloading}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-black/15 bg-white px-3 py-1.5 text-xs font-medium text-black/80 transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+                        <path
+                          d="M6 1v7m0 0L3.5 5.5M6 8l2.5-2.5M2 10h8"
+                          stroke="currentColor"
+                          strokeWidth="1.3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          fill="none"
+                        />
+                      </svg>
+                      {isDownloading ? "Packe ZIP …" : "Alle Schnitte (ZIP)"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => exportWebFont(font)}
+                      disabled={fontFiles.length === 0 || isExporting}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white transition enabled:hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Webfont-Paket mit @font-face CSS und Dateien herunterladen"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+                        <path
+                          d="M1.5 3h9M1.5 6h9M1.5 9h5M8.5 7.5v3M7 9h3"
+                          stroke="currentColor"
+                          strokeWidth="1.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          fill="none"
+                        />
+                      </svg>
+                      {isExporting ? "Erstelle Webexport …" : "Webexport"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFontToDelete(font)}
+                      className="rounded-lg border border-black/15 bg-white px-3 py-1.5 text-xs font-medium text-black/70 hover:bg-red-50 hover:text-red-700"
+                    >
+                      Entfernen
+                    </button>
+                  </div>
                 </header>
 
+                <div
+                  className="grid overflow-hidden transition-[grid-template-rows] duration-200 ease-out"
+                  style={{
+                    gridTemplateRows: isCollapsed ? "0fr" : "1fr",
+                  }}
+                >
+                  <div className="min-h-0">
+                    <div className="flex flex-col gap-5">
                 <div className="rounded-xl border border-black/5 bg-black/[0.015] p-6">
                   <div
                     className="flex flex-wrap items-baseline gap-x-4"
@@ -546,6 +832,9 @@ export default function TypographyPanel({
                         ))}
                     </div>
                   )}
+                </div>
+                    </div>
+                  </div>
                 </div>
               </article>
             );

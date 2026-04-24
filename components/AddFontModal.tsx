@@ -278,10 +278,11 @@ export default function AddFontModal({
   };
 
   const canSubmit = useMemo(() => {
-    if (submitting || !licenseConfirmed) return false;
+    if (submitting) return false;
     if (mode === "google") {
       return selectedFamily !== null && selectedVariants.size > 0;
     }
+    if (!licenseConfirmed) return false;
     return customFamily.trim().length > 0 && customEntries.length > 0;
   }, [
     submitting,
@@ -330,6 +331,8 @@ export default function AddFontModal({
           source: "google",
           family: data.family ?? selectedFamily.family,
           category: data.category ?? selectedFamily.category ?? null,
+          // Google Fonts stehen unter einer freien Lizenz (meist OFL/Apache),
+          // daher implizit bestaetigt - kein zusaetzlicher Haken noetig.
           licenseConfirmed: true,
           files: data.files.map((f) => {
             const bytes = base64ToUint8Array(f.base64);
@@ -652,19 +655,28 @@ export default function AddFontModal({
           </div>
         )}
 
-        <label className="flex items-start gap-2 rounded-xl border border-black/10 bg-black/[0.02] p-3 text-sm">
-          <input
-            type="checkbox"
-            className="mt-1"
-            checked={licenseConfirmed}
-            onChange={(e) => setLicenseConfirmed(e.target.checked)}
-          />
-          <span className="text-black/80">
-            Ich bestaetige, dass eine gueltige Lizenz fuer die Nutzung dieser
-            Schrift(en) vorliegt oder die Schrift unter einer freien Lizenz
-            (z.B. SIL Open Font License) steht.
-          </span>
-        </label>
+        {mode === "custom" ? (
+          <label className="flex items-start gap-2 rounded-xl border border-black/10 bg-black/[0.02] p-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={licenseConfirmed}
+              onChange={(e) => setLicenseConfirmed(e.target.checked)}
+            />
+            <span className="text-black/80">
+              Ich bestaetige, dass eine gueltige Lizenz fuer die Nutzung
+              dieser Schrift(en) vorliegt oder die Schrift unter einer freien
+              Lizenz (z.B. SIL Open Font License) steht.
+            </span>
+          </label>
+        ) : (
+          selectedFamily && (
+            <p className="rounded-xl border border-black/10 bg-black/[0.02] p-3 text-xs text-black/60">
+              Google Fonts sind unter einer freien Lizenz (Open Font License /
+              Apache) verfuegbar und koennen direkt verwendet werden.
+            </p>
+          )
+        )}
 
         {submitError && (
           <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
