@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { supabase } from "@/lib/supabase/client";
 
+import { formatRgb as formatRgbFromLib, hexToRgb } from "@/lib/color";
+
 import AddCategoryDialog from "./AddCategoryDialog";
 import AddColorSwatch from "./AddColorSwatch";
 import ColorEditorModal, {
@@ -13,6 +15,9 @@ import ColorEditorModal, {
 } from "./ColorEditorModal";
 import ColorSwatch, { type ColorSwatchData } from "./ColorSwatch";
 import ConfirmDialog from "./ConfirmDialog";
+import ImportColorsFromUrlModal, {
+  type ImportColorItem,
+} from "./ImportColorsFromUrlModal";
 
 type Group = "print" | "digital";
 
@@ -75,6 +80,10 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
   const [addCategoryGroup, setAddCategoryGroup] = useState<Group | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
   const [deletingCategory, setDeletingCategory] = useState(false);
+
+  const [importOpen, setImportOpen] = useState(false);
+  const [swapping, setSwapping] = useState(false);
+  const [swapMessage, setSwapMessage] = useState<string | null>(null);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<"add" | "edit">("add");
@@ -384,6 +393,133 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     setEditorColorId(null);
   };
 
+  const handleImportFromUrl = async (items: ImportColorItem[]) => {
+    if (items.length === 0) return;
+    const group: Group = "digital";
+
+    const digitalCategories = categories.filter((c) => c.group === group);
+    const hexCategory = digitalCategories.find(
+      (c) => c.key.toLowerCase() === "hex"
+    );
+    const rgbCategory = digitalCategories.find(
+      (c) => c.key.toLowerCase() === "rgb"
+    );
+
+    const basePosition =
+      colors
+        .filter((c) => c.group === group)
+        .reduce((max, c) => Math.max(max, c.position), -1) + 1;
+
+    const existingHexes = new Set(
+      colors
+        .filter((c) => c.group === group)
+        .map((c) => c.hex.toUpperCase())
+    );
+    const deduped = items.filter(
+      (item) => !existingHexes.has(item.hex.toUpperCase())
+    );
+    if (deduped.length === 0) return;
+
+    const insertRows = deduped.map((item, idx) => ({
+      brand_id: brandId,
+      group,
+      name: item.name,
+      hex: item.hex.toUpperCase(),
+      position: basePosition + idx,
+    }));
+
+    const { data: insertedColors, error: insertError } = await supabase
+      .from("brand_colors")
+      .insert(insertRows)
+      .select("id, brand_id, group, name, hex, position");
+
+    if (insertError) throw new Error(insertError.message);
+    const created = (insertedColors ?? []) as Color[];
+
+    const valueRows: Array<{
+      color_id: string;
+      category_id: string;
+      value: string;
+    }> = [];
+    for (const row of created) {
+      if (hexCategory) {
+        valueRows.push({
+          color_id: row.id,
+          category_id: hexCategory.id,
+          value: row.hex.toUpperCase(),
+        });
+      }
+      if (rgbCategory) {
+        const rgb = hexToRgb(row.hex);
+        if (rgb) {
+          valueRows.push({
+            color_id: row.id,
+            category_id: rgbCategory.id,
+            value: formatRgbFromLib(rgb),
+          });
+        }
+      }
+    }
+
+    let insertedValues: ColorValue[] = [];
+    if (valueRows.length > 0) {
+      const { data: valueData, error: valueError } = await supabase
+        .from("brand_color_values")
+        .insert(valueRows)
+        .select("id, color_id, category_id, value");
+      if (valueError) throw new Error(valueError.message);
+      insertedValues = (valueData ?? []) as ColorValue[];
+    }
+
+    setColors((prev) => [...prev, ...created]);
+    setValues((prev) => [...prev, ...insertedValues]);
+  };
+
+  const handleSwapPrintToDigital = async () => {
+    if (swapping) return;
+    setSwapping(true);
+    setSwapMessage(null);
+    setError(null);
+    try {
+      const printColors = colors
+        .filter((c) => c.group === "print")
+        .sort((a, b) => a.position - b.position);
+
+      if (printColors.length === 0) {
+        setSwapMessage("Keine Print-Farben vorhanden.");
+        return;
+      }
+
+      const existingDigitalHex = new Set(
+        colors
+          .filter((c) => c.group === "digital")
+          .map((c) => c.hex.toUpperCase())
+      );
+      const candidates = printColors.filter(
+        (c) => !existingDigitalHex.has(c.hex.toUpperCase())
+      );
+
+      if (candidates.length === 0) {
+        setSwapMessage("Alle Print-Farben sind bereits in Digital vorhanden.");
+        return;
+      }
+
+      const items: ImportColorItem[] = candidates.map((c) => ({
+        hex: c.hex,
+        name: c.name,
+      }));
+
+      await handleImportFromUrl(items);
+      setSwapMessage(
+        `${candidates.length} Farbe${candidates.length === 1 ? "" : "n"} uebernommen.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSwapping(false);
+    }
+  };
+
   const editorCategories: EditorCategory[] = useMemo(() => {
     return categories
       .filter((c) => c.group === editorGroup)
@@ -564,6 +700,84 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
                   <p className="text-sm text-black/50">Lade Farben …</p>
                 )}
               </div>
+
+              {!loading && group === "digital" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setImportOpen(true)}
+                    aria-label="Farben aus Website importieren"
+                    title="Farben aus Website importieren"
+                    className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white transition hover:bg-black/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/40"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M10.5 1.5l.55 1.45L12.5 3.5l-1.45.55L10.5 5.5l-.55-1.45L8.5 3.5l1.45-.55L10.5 1.5z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M13.5 6.5l.4 1.1 1.1.4-1.1.4-.4 1.1-.4-1.1-1.1-.4 1.1-.4.4-1.1z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M3.5 4.5l.35.95.95.35-.95.35-.35.95-.35-.95L2.2 5.8l.95-.35L3.5 4.5z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M8.2 6.3l1.5 1.5M2.5 14.5l6.3-6.3a1 1 0 011.4 0l.6.6a1 1 0 010 1.4l-6.3 6.3"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    Aus URL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSwapPrintToDigital}
+                    disabled={swapping}
+                    aria-label="Print-Farben in Digital konvertieren"
+                    title="Print-Farben in Digital konvertieren"
+                    className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white transition hover:bg-black/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/40 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M3 5h8.5M8.5 2L12 5 8.5 8"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M13 11H4.5M7.5 14L4 11l3.5-3"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    {swapping ? "Swap …" : "Swap"}
+                  </button>
+                  {swapMessage && (
+                    <span className="text-[11px] uppercase tracking-widest text-black/50">
+                      {swapMessage}
+                    </span>
+                  )}
+                </div>
+              )}
             </section>
           );
         })}
@@ -574,6 +788,12 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
         group={addCategoryGroup ?? "print"}
         onClose={() => setAddCategoryGroup(null)}
         onSubmit={handleAddCategory}
+      />
+
+      <ImportColorsFromUrlModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImport={handleImportFromUrl}
       />
 
       <ColorEditorModal
