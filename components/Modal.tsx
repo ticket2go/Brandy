@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type ModalProps = {
   open: boolean;
@@ -19,8 +19,24 @@ export default function Modal({
   children,
   widthClassName = "max-w-md",
 }: ModalProps) {
+  const [rendered, setRendered] = useState(open);
+  const [visible, setVisible] = useState(false);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
-    if (!open) return;
+    if (open) {
+      setRendered(true);
+      const frame = window.requestAnimationFrame(() => setVisible(true));
+      return () => window.cancelAnimationFrame(frame);
+    }
+    setVisible(false);
+    const timeout = window.setTimeout(() => setRendered(false), 300);
+    return () => window.clearTimeout(timeout);
+  }, [open]);
+
+  useEffect(() => {
+    if (!rendered) return;
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
@@ -31,24 +47,33 @@ export default function Modal({
       window.removeEventListener("keydown", handleKey);
       document.body.style.overflow = previousOverflow;
     };
-  }, [open, onClose]);
+  }, [rendered, onClose]);
 
-  if (!open) return null;
+  if (!rendered) return null;
 
   return (
     <div
+      ref={overlayRef}
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4"
+      className="fixed inset-0 z-[70] flex items-center justify-center px-4 transition-all duration-300 ease-out"
       style={{
-        backdropFilter: "blur(18px)",
-        WebkitBackdropFilter: "blur(18px)",
+        backgroundColor: visible ? "rgba(0,0,0,0.4)" : "rgba(0,0,0,0)",
+        backdropFilter: visible ? "blur(18px)" : "blur(0px)",
+        WebkitBackdropFilter: visible ? "blur(18px)" : "blur(0px)",
+        opacity: visible ? 1 : 0,
       }}
       onClick={onClose}
     >
       <div
-        className={`w-full ${widthClassName} rounded-2xl bg-white p-6 shadow-2xl`}
+        ref={panelRef}
+        className={`w-full ${widthClassName} rounded-2xl bg-white p-6 transition-all duration-300 ease-out`}
+        style={{
+          opacity: visible ? 1 : 0,
+          transform: visible ? "translateY(0) scale(1)" : "translateY(8px) scale(0.98)",
+          filter: visible ? "blur(0px)" : "blur(6px)",
+        }}
         onClick={(event) => event.stopPropagation()}
       >
         <h3 className="text-lg font-semibold tracking-tight text-black">
