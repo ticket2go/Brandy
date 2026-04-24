@@ -509,6 +509,15 @@ export async function parseCclibsFile(file: File): Promise<CclibsColor[]> {
   //    - Element-Id -> Name, Element-Id -> Group-Id, Group-Id -> Group-Name
   const elementIndex = buildElementIndex(parsedFiles);
 
+  if (typeof console !== "undefined") {
+    const groupNames = Array.from(new Set(elementIndex.groupNameById.values()));
+    // Kompakte Debug-Ausgabe fuer die Browser-Console.
+    console.info(
+      `[cclibs] ${parsedFiles.length} JSON-Files, ${groupNames.length} Gruppen erkannt:`,
+      groupNames
+    );
+  }
+
   // 3. Farben extrahieren. Wenn der Walker keinen Namen findet, den Namen aus
   // dem Element-Manifest verwenden, das auf diese Datei zeigt.
   for (const { path, data } of parsedFiles) {
@@ -589,6 +598,9 @@ type ElementIndex = {
   groupNameById: Map<string, string>;
   // Fallback: Pfade -> Name (wenn keine Id aufgeloest werden konnte)
   nameByPath: Map<string, string>;
+  // Pfad-Praefix -> Gruppen-Name. Wenn ein Farb-File unter diesem Praefix
+  // liegt, wird der Name als Gruppe verwendet.
+  groupByPathPrefix: Array<{ prefix: string; name: string }>;
 };
 
 function buildElementIndex(
@@ -600,6 +612,7 @@ function buildElementIndex(
     groupIdByElementId: new Map(),
     groupNameById: new Map(),
     nameByPath: new Map(),
+    groupByPathPrefix: [],
   };
 
   // Durchwandere alle JSONs und sammle Element-Knoten ein.
@@ -628,14 +641,23 @@ function buildElementIndex(
       const name =
         typeof node.name === "string" ? node.name.trim() : "";
 
-      const isGroup = /vnd\.adobe\.element\.group/.test(typeField);
+      // Container: klassische Groups ODER Color-Themes gelten als Gruppe.
+      const isContainer =
+        /vnd\.adobe\.element\.group/.test(typeField) ||
+        /vnd\.adobe\.element\.colortheme/.test(typeField) ||
+        /colortheme/.test(typeField) ||
+        isObject(node.colortheme) ||
+        Array.isArray(node.swatches);
 
-      if (isGroup && id && name) {
+      if (isContainer && id && name) {
         idx.groupNameById.set(id, name);
         // Kinder verweisen oft per id in `children[].id` oder `elements[].id`.
         const children =
           (Array.isArray(node.children) ? node.children : null) ??
-          (Array.isArray(node.elements) ? node.elements : null);
+          (Array.isArray(node.elements) ? node.elements : null) ??
+          (Array.isArray((node as UnknownObject).members)
+            ? ((node as UnknownObject).members as unknown[])
+            : null);
         if (children) {
           for (const child of children) {
             let childId: string | null = null;
@@ -645,15 +667,44 @@ function buildElementIndex(
                 (typeof child.id === "string" && child.id) ||
                 (typeof child.elementId === "string" && child.elementId) ||
                 (typeof child.compId === "string" && child.compId) ||
+                (typeof child.href === "string" && child.href) ||
                 "";
               if (cid) childId = cid;
             }
             if (childId) idx.groupIdByElementId.set(childId, id);
           }
         }
+        // Pfad-Praefix-Basiertes Matching: wenn die Container-Representation
+        // in einem Ordner liegt (z.B. library/elements/<uuid>/), wird dieser
+        // Ordner als Gruppen-Praefix registriert.
+        const reps = Array.isArray(node.representations)
+          ? node.representations
+          : [];
+        for (const rep of reps) {
+          if (!isObject(rep)) continue;
+          const p =
+            typeof rep.path === "string"
+              ? rep.path
+              : typeof rep.href === "string"
+                ? rep.href
+                : typeof rep.componentId === "string"
+                  ? rep.componentId
+                  : null;
+          if (!p) continue;
+          const abs = normalisePath(p, originPath);
+          const prefix = abs.includes("/")
+            ? abs.slice(0, abs.lastIndexOf("/"))
+            : abs;
+          if (prefix) idx.groupByPathPrefix.push({ prefix, name });
+        }
+        // Zusaetzlich Pfad des eigenen Manifest-Files selbst als Praefix nutzen.
+        const ownPrefix = originPath.includes("/")
+          ? originPath.slice(0, originPath.lastIndexOf("/"))
+          : "";
+        if (ownPrefix) idx.groupByPathPrefix.push({ prefix: ownPrefix, name });
       }
 
-      if (id && name && !isGroup) idx.nameById.set(id, name);
+      if (id && name && !isContainer) idx.nameById.set(id, name);
 
       // Gruppen-Referenz am Element
       const parentGroup =
@@ -747,6 +798,38 @@ function resolveContextForPath(
   if (id) {
     const groupId = idx.groupIdByElementId.get(id);
     if (groupId) group = idx.groupNameById.get(groupId);
+  }
+
+  // Fallback: Pfad-Praefix. Laengster Match gewinnt.
+  if (!group) {
+    let longest = "";
+    for (const entry of idx.groupByPathPrefix) {
+      if (
+        path === entry.prefix ||
+        path.startsWith(entry.prefix + "/")
+      ) {
+        if (entry.prefix.length > longest.length) {
+          longest = entry.prefix;
+          group = entry.name;
+        }
+      }
+    }
+  }
+
+  // Fallback: Wenn in einem Pfad-Segment eine bekannte Child-Id auftaucht,
+  // deren Gruppe wir kennen, verwenden wir diese Gruppe.
+  if (!group) {
+    const segments = path.split("/").filter(Boolean);
+    for (const seg of segments) {
+      const groupId = idx.groupIdByElementId.get(seg);
+      if (groupId) {
+        const gName = idx.groupNameById.get(groupId);
+        if (gName) {
+          group = gName;
+          break;
+        }
+      }
+    }
   }
 
   return { name, group };
