@@ -177,6 +177,87 @@ export interface Database {
         };
         Relationships: [];
       };
+      brand_fonts: {
+        Row: {
+          id: string;
+          brand_id: string;
+          family: string;
+          source: "google" | "custom";
+          license_confirmed: boolean;
+          google_category: string | null;
+          roles: string[];
+          position: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          brand_id: string;
+          family: string;
+          source: "google" | "custom";
+          license_confirmed?: boolean;
+          google_category?: string | null;
+          roles?: string[];
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          brand_id?: string;
+          family?: string;
+          source?: "google" | "custom";
+          license_confirmed?: boolean;
+          google_category?: string | null;
+          roles?: string[];
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      brand_font_files: {
+        Row: {
+          id: string;
+          font_id: string;
+          variant: string;
+          style_label: string;
+          weight: number;
+          italic: boolean;
+          format: string;
+          storage_path: string;
+          size_bytes: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          font_id: string;
+          variant: string;
+          style_label: string;
+          weight?: number;
+          italic?: boolean;
+          format: string;
+          storage_path: string;
+          size_bytes?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          font_id?: string;
+          variant?: string;
+          style_label?: string;
+          weight?: number;
+          italic?: boolean;
+          format?: string;
+          storage_path?: string;
+          size_bytes?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       assets: {
         Row: {
           id: string;
