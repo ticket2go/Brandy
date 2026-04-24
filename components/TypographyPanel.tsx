@@ -196,9 +196,18 @@ export default function TypographyPanel({
 
     const uploadedFiles: BrandFontFile[] = [];
 
+    // Dedupe auf (variant, format) - die DB hat dort einen Unique-Constraint,
+    // und Google Fonts liefert manchmal mehrere Subsets fuer dieselbe Kombi.
+    const dedupeKey = (variant: string, format: string) =>
+      `${variant}::${format}`;
+    const seenKeys = new Set<string>();
+
     try {
       if (payload.source === "google") {
         for (const file of payload.files) {
+          const key = dedupeKey(file.variant, file.format);
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
           const path = `${brandSlug}/fonts/${familySlug}/${newFont.id}/${file.variant}.${file.format}`;
           const { error: uploadError } = await supabase.storage
             .from(STORAGE_BUCKET)
@@ -229,6 +238,9 @@ export default function TypographyPanel({
         }
       } else {
         for (const entry of payload.files) {
+          const key = dedupeKey(entry.variant, entry.format);
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
           const path = `${brandSlug}/fonts/${familySlug}/${newFont.id}/${entry.variant}.${entry.format}`;
           const { error: uploadError } = await supabase.storage
             .from(STORAGE_BUCKET)

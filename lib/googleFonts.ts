@@ -93,11 +93,11 @@ function variantsFromMetadata(entry: MetadataEntry): GoogleFontVariant[] {
   const variants = new Map<string, GoogleFontVariant>();
   const fonts = entry.fonts ?? {};
   for (const key of Object.keys(fonts)) {
-    // keys look like "0,400" (italic,wght) or "1,700"
-    const match = key.match(/^(\d),(\d{3})$/);
+    // Google-Fonts-Metadata-Keys sehen so aus: "400", "400i", "300", "300i", "700i"
+    const match = key.match(/^(\d{3,4})(i)?$/i);
     if (!match) continue;
-    const italic = match[1] === "1";
-    const weight = parseInt(match[2], 10);
+    const weight = parseInt(match[1], 10);
+    const italic = match[2]?.toLowerCase() === "i";
     const variant = italic
       ? weight === 400
         ? "italic"
@@ -114,8 +114,37 @@ function variantsFromMetadata(entry: MetadataEntry): GoogleFontVariant[] {
     });
   }
 
+  // Variable-Font-Familien ohne statische Eintraege: aus der wght-Achse
+  // diskrete Standardgewichte ableiten.
   if (variants.size === 0) {
-    // Variable-Font-Familien ohne statische Varianten bekommen ein Default
+    const wght = entry.axes?.find((a) => a.tag === "wght");
+    const italSupported = (entry.axes ?? []).some((a) => a.tag === "ital")
+      ? [false, true]
+      : [false];
+    const STEPS = [100, 200, 300, 400, 500, 600, 700, 800, 900];
+    const min = wght?.min ?? 400;
+    const max = wght?.max ?? 400;
+    const weights = STEPS.filter((w) => w >= min && w <= max);
+    for (const weight of weights.length ? weights : [400]) {
+      for (const italic of italSupported) {
+        const variant = italic
+          ? weight === 400
+            ? "italic"
+            : `${weight}italic`
+          : weight === 400
+            ? "regular"
+            : String(weight);
+        variants.set(variant, {
+          variant,
+          weight,
+          italic,
+          styleLabel: styleLabelFor(weight, italic),
+        });
+      }
+    }
+  }
+
+  if (variants.size === 0) {
     variants.set("regular", {
       variant: "regular",
       weight: 400,
@@ -246,9 +275,23 @@ export async function fetchGoogleFontFiles(
 
   const css = await cssResponse.text();
   const blocks = css.split("@font-face");
-  const files: FontFileDownload[] = [];
 
+  // Pro (weight, italic) kann css2 mehrere Bloecke liefern (latin, latin-ext,
+  // cyrillic, ...). Wir dedupen auf den ersten Treffer, sonst laeuft der
+  // Unique-Constraint (font_id, variant, format) in der DB voll.
+  type Candidate = {
+    variant: GoogleFontVariant;
+    url: string;
+    format: string;
+    subsetHint: string;
+  };
+  const candidates = new Map<string, Candidate>();
+
+  let lastSubsetHint = "";
   for (const block of blocks) {
+    const subsetMatch = block.match(/\/\*\s*([^*]+?)\s*\*\//);
+    if (subsetMatch) lastSubsetHint = subsetMatch[1];
+
     const styleMatch = block.match(/font-style:\s*([a-z]+)/i);
     const weightMatch = block.match(/font-weight:\s*(\d{3})/i);
     const urlMatch = block.match(/url\(([^)]+)\)\s*format\(([^)]+)\)/i);
@@ -263,8 +306,28 @@ export async function fetchGoogleFontFiles(
 
     const fontUrl = urlMatch[1].replace(/['"]/g, "").trim();
     const format = urlMatch[2].replace(/['"]/g, "").trim();
+    const key = `${requested.variant}-${format}`;
 
-    const binaryResponse = await fetch(fontUrl);
+    // Bevorzuge 'latin' als Subset (umfassender Umlaut-Support), nimm sonst
+    // den ersten Treffer.
+    const existing = candidates.get(key);
+    const isLatin = /\blatin\b/i.test(lastSubsetHint);
+    if (
+      !existing ||
+      (isLatin && !/\blatin\b/i.test(existing.subsetHint))
+    ) {
+      candidates.set(key, {
+        variant: requested,
+        url: fontUrl,
+        format,
+        subsetHint: lastSubsetHint,
+      });
+    }
+  }
+
+  const files: FontFileDownload[] = [];
+  for (const candidate of candidates.values()) {
+    const binaryResponse = await fetch(candidate.url);
     if (!binaryResponse.ok) {
       throw new Error(
         `Schriftdatei konnte nicht heruntergeladen werden (Status ${binaryResponse.status}).`
@@ -272,11 +335,11 @@ export async function fetchGoogleFontFiles(
     }
     const buffer = Buffer.from(await binaryResponse.arrayBuffer());
     files.push({
-      variant: requested.variant,
-      weight: requested.weight,
-      italic: requested.italic,
-      styleLabel: requested.styleLabel,
-      format,
+      variant: candidate.variant.variant,
+      weight: candidate.variant.weight,
+      italic: candidate.variant.italic,
+      styleLabel: candidate.variant.styleLabel,
+      format: candidate.format,
       contentType: binaryResponse.headers.get("content-type") ?? "font/woff2",
       base64: buffer.toString("base64"),
     });
