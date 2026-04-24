@@ -65,7 +65,7 @@ export default function BrandRoles() {
             >
               <span>{role.label}</span>
               {hasPeople && (
-                <span className="ml-auto text-[11px] font-semibold text-white">
+                <span className="ml-auto text-[11px] font-semibold text-black">
                   {role.people.length}
                 </span>
               )}
