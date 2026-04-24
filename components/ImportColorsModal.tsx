@@ -15,11 +15,7 @@ import {
   hexToRgb,
   type Cmyk,
 } from "@/lib/color";
-import {
-  parseCclibsFile,
-  type CclibsColor,
-  type CclibsDiagnostics,
-} from "@/lib/parseCclibs";
+import { parseCclibsFile, type CclibsColor } from "@/lib/parseCclibs";
 
 import Modal from "./Modal";
 
@@ -81,10 +77,7 @@ type PreparedRow = {
   spot?: { book?: string; name: string };
   mode: ImportColorItem["mode"];
   count?: number;
-  group?: string;
 };
-
-const ALL_GROUPS = "__ALL__";
 
 function modeBadge(mode: ImportColorItem["mode"]): string {
   switch (mode) {
@@ -110,13 +103,10 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [urlResults, setUrlResults] = useState<ExtractedColor[] | null>(null);
   const [fileResults, setFileResults] = useState<CclibsColor[] | null>(null);
-  const [fileDiagnostics, setFileDiagnostics] =
-    useState<CclibsDiagnostics | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [parsingFile, setParsingFile] = useState(false);
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
   const [hideNeutrals, setHideNeutrals] = useState(false);
-  const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -129,12 +119,10 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
       setError(null);
       setUrlResults(null);
       setFileResults(null);
-      setFileDiagnostics(null);
       setFileName(null);
       setParsingFile(false);
       setRowState({});
       setHideNeutrals(false);
-      setGroupFilter(ALL_GROUPS);
     }
   }, [open]);
 
@@ -166,7 +154,6 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
       if (c.cmyk) parts.push(formatCmyk(c.cmyk));
       else parts.push(c.hex.toUpperCase());
       if (c.spot?.book) parts.push(c.spot.book);
-      if (c.group) parts.push(c.group);
       return {
         key: `file-${idx}-${c.hex}-${c.mode}`,
         hex: c.hex,
@@ -177,31 +164,17 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
         cmyk: c.cmyk,
         spot: c.spot,
         mode: c.mode,
-        group: c.group,
       };
     });
   }, [tab, urlResults, fileResults]);
 
-  const groupOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const row of rows) {
-      if (row.group) set.add(row.group);
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "de"));
-  }, [rows]);
-
   const filteredRows = useMemo(() => {
+    if (!hideNeutrals) return rows;
     return rows.filter((row) => {
-      if (hideNeutrals) {
-        const l = luminance(row.hex);
-        if (!(l > 0.02 && l < 0.98)) return false;
-      }
-      if (groupFilter !== ALL_GROUPS) {
-        if ((row.group ?? "") !== groupFilter) return false;
-      }
-      return true;
+      const l = luminance(row.hex);
+      return l > 0.02 && l < 0.98;
     });
-  }, [rows, hideNeutrals, groupFilter]);
+  }, [rows, hideNeutrals]);
 
   const selectedCount = useMemo(
     () => filteredRows.filter((row) => rowState[row.key]?.selected).length,
@@ -275,9 +248,8 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
     setFileResults(null);
     setFileName(file.name);
     try {
-      const { colors: parsed, diagnostics } = await parseCclibsFile(file);
+      const { colors: parsed } = await parseCclibsFile(file);
       setFileResults(parsed);
-      setFileDiagnostics(diagnostics);
       if (parsed.length === 0) {
         setError("Keine Farben in dieser Datei gefunden.");
       }
@@ -506,25 +478,6 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
               {fileName && !parsingFile && (
                 <p className="text-[11px] text-black/50">{fileName}</p>
               )}
-              {fileDiagnostics && !parsingFile && (
-                <div className="mt-2 w-full rounded-md bg-black/[0.03] px-3 py-2 text-left text-[11px] leading-relaxed text-black/60">
-                  <div>
-                    <span className="font-semibold text-black/70">
-                      {fileDiagnostics.groupNames.length}
-                    </span>{" "}
-                    Gruppen erkannt
-                    {fileDiagnostics.groupNames.length > 0 && (
-                      <>: {fileDiagnostics.groupNames.join(", ")}</>
-                    )}
-                  </div>
-                  {fileDiagnostics.groupNames.length === 0 && (
-                    <div className="mt-1 break-all text-black/50">
-                      Gefundene JSON-Keys:{" "}
-                      {fileDiagnostics.topLevelKeys.join(", ") || "-"}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -540,31 +493,12 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-black/60">
               <span>
                 {rows.length} Farben gefunden
-                {rows.length !== filteredRows.length
+                {hideNeutrals && rows.length !== filteredRows.length
                   ? ` (${filteredRows.length} sichtbar)`
                   : ""}
                 · {selectedCount} ausgewaehlt
               </span>
-              <div className="flex flex-wrap items-center gap-3">
-                {tab === "file" && groupOptions.length > 0 && (
-                  <label className="flex items-center gap-1">
-                    <span className="text-black/50">Kategorie</span>
-                    <select
-                      value={groupFilter}
-                      onChange={(event) => {
-                        setGroupFilter(event.target.value);
-                      }}
-                      className="rounded-md border border-black/15 bg-white px-2 py-1 text-[11px] font-medium text-black/80 outline-none focus:border-black"
-                    >
-                      <option value={ALL_GROUPS}>Alle</option>
-                      {groupOptions.map((g) => (
-                        <option key={g} value={g}>
-                          {g}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
+              <div className="flex items-center gap-3">
                 <label className="flex items-center gap-1">
                   <input
                     type="checkbox"
