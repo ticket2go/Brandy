@@ -245,7 +245,9 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           {activeTab === "logokit" && (
             <LogokitPanel logoSrc={logoSrc} brandName={brand.name} />
           )}
-          {activeTab === "farben" && <ColorsPanel brandName={brand.name} />}
+          {activeTab === "farben" && (
+            <ColorsPanel brandId={brand.id} brandName={brand.name} />
+          )}
           {activeTab === "typografie" && (
             <PlaceholderPanel title="Typografie" />
           )}

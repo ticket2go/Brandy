@@ -81,6 +81,99 @@ export interface Database {
         };
         Relationships: [];
       };
+      brand_color_categories: {
+        Row: {
+          id: string;
+          brand_id: string;
+          group: "print" | "digital";
+          key: string;
+          label: string;
+          position: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          brand_id: string;
+          group: "print" | "digital";
+          key: string;
+          label: string;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          brand_id?: string;
+          group?: "print" | "digital";
+          key?: string;
+          label?: string;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      brand_colors: {
+        Row: {
+          id: string;
+          brand_id: string;
+          group: "print" | "digital";
+          name: string;
+          hex: string;
+          position: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          brand_id: string;
+          group: "print" | "digital";
+          name: string;
+          hex: string;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          brand_id?: string;
+          group?: "print" | "digital";
+          name?: string;
+          hex?: string;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      brand_color_values: {
+        Row: {
+          id: string;
+          color_id: string;
+          category_id: string;
+          value: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          color_id: string;
+          category_id: string;
+          value: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          color_id?: string;
+          category_id?: string;
+          value?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       assets: {
         Row: {
           id: string;
