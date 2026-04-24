@@ -361,14 +361,17 @@ function buildColorRectangle(
   w: number,
   h: number,
   pageH: number,
-  fillColorSelf: string
+  fillColorSelf: string,
+  cornerRadius: number = 0
 ): PageItemXml {
-  // Umrechnung Page-Local -> Spread-Koordinaten: die Page ist im Spread um
-  // -pageH/2 in y verschoben, und der Objekt-Ursprung liegt in der
-  // Objekt-Mitte.
   const cx = pageX + w / 2;
   const cy = pageY + h / 2 - pageH / 2;
-  return `\t\t<Rectangle Self="${self}" ItemLayer="layer1" Name="$ID/" Visible="true" GradientFillStart="0 0" GradientFillLength="0" GradientFillAngle="0" GradientStrokeStart="0 0" GradientStrokeLength="0" GradientStrokeAngle="0" ItemTransform="1 0 0 1 ${cx} ${cy}" StrokeWeight="0" StrokeColor="Swatch/None" FillColor="${fillColorSelf}" ContentType="Unassigned" OverriddenPageItemProps="" HorizontalLayoutConstraints="FlexibleDimension FixedDimension FlexibleDimension" VerticalLayoutConstraints="FlexibleDimension FixedDimension FlexibleDimension">
+  const r = cornerRadius > 0 ? Math.min(cornerRadius, Math.min(w, h) / 2) : 0;
+  const cornerAttrs =
+    r > 0
+      ? ` TopLeftCornerOption="RoundedCorner" TopLeftCornerRadius="${r}" TopRightCornerOption="RoundedCorner" TopRightCornerRadius="${r}" BottomLeftCornerOption="RoundedCorner" BottomLeftCornerRadius="${r}" BottomRightCornerOption="RoundedCorner" BottomRightCornerRadius="${r}"`
+      : "";
+  return `\t\t<Rectangle Self="${self}" ItemLayer="layer1" Name="$ID/" Visible="true" GradientFillStart="0 0" GradientFillLength="0" GradientFillAngle="0" GradientStrokeStart="0 0" GradientStrokeLength="0" GradientStrokeAngle="0" ItemTransform="1 0 0 1 ${cx} ${cy}" StrokeWeight="0" StrokeColor="Swatch/None" FillColor="${fillColorSelf}"${cornerAttrs} ContentType="Unassigned" OverriddenPageItemProps="" HorizontalLayoutConstraints="FlexibleDimension FixedDimension FlexibleDimension" VerticalLayoutConstraints="FlexibleDimension FixedDimension FlexibleDimension">
 \t\t\t<Properties>
 \t\t\t\t<PathGeometry>
 \t\t\t\t\t<GeometryPathType PathOpen="false">
@@ -498,22 +501,44 @@ function buildPaletteSpread(params: {
     )
   );
 
-  // Farbraster. Layout ist abhängig von der Anzahl Farben.
+  // Farbraster. Layout ist abhängig von der Anzahl Farben. Swatches werden
+  // kompakt gehalten (max. ~42 mm breit), mit abgerundeten Ecken.
   const n = prepared.length;
   const gridTop = margin + titleFrameH + gutter;
   const gridLeft = margin;
   const gridW = w - 2 * margin;
   const gridH = h - gridTop - margin;
 
+  // Ziel-Zellgrößen (in pt). 42 mm ≈ 119 pt.
+  const MAX_CELL_W = mmToPt(42);
+  const MAX_CELL_H = mmToPt(52);
+
   if (n > 0 && gridH > 0 && gridW > 0) {
-    const cols = Math.min(n, Math.max(1, Math.ceil(Math.sqrt(n * (gridW / Math.max(gridH, 1))))));
+    // Spaltenzahl so wählen, dass Zellen die Zielgröße möglichst nicht
+    // überschreiten, die Gesamtbreite aber nicht sprengen.
+    const minColsForWidth = Math.ceil((gridW + gutter) / (MAX_CELL_W + gutter));
+    const aspectCols = Math.ceil(
+      Math.sqrt(n * (gridW / Math.max(gridH, 1)))
+    );
+    const cols = Math.min(
+      Math.max(minColsForWidth, aspectCols, 1),
+      n
+    );
     const rows = Math.ceil(n / cols);
 
-    const cellW = (gridW - (cols - 1) * gutter) / cols;
-    const cellH = (gridH - (rows - 1) * gutter) / rows;
-    // Swatchfläche oben, Text unten. ~65/35 Split mit Minimum für Text.
-    const textBlockH = Math.max(48, Math.min(cellH * 0.4, 110));
+    let cellW = (gridW - (cols - 1) * gutter) / cols;
+    let cellH = (gridH - (rows - 1) * gutter) / rows;
+
+    // Falls Zellen zu groß werden, auf Maxwerte kappen (Raster zentriert im
+    // Grid lassen wir der Einfachheit halber links-oben, Rest bleibt leer).
+    if (cellW > MAX_CELL_W) cellW = MAX_CELL_W;
+    if (cellH > MAX_CELL_H) cellH = MAX_CELL_H;
+
+    // Swatchfläche oben, Text unten. Ohne HEX-Zeile reicht ein kleinerer
+    // Textblock; wir reservieren ca. 35 % der Zellenhöhe, min. 34 pt.
+    const textBlockH = Math.max(34, Math.min(cellH * 0.35, 70));
     const swatchH = cellH - textBlockH;
+    const cornerRadius = Math.min(10, Math.min(cellW, swatchH) * 0.12);
 
     prepared.forEach((p, idx) => {
       const col = idx % cols;
@@ -521,7 +546,6 @@ function buildPaletteSpread(params: {
       const cellX = gridLeft + col * (cellW + gutter);
       const cellY = gridTop + row * (cellH + gutter);
 
-      // Farbfläche.
       items.push(
         buildColorRectangle(
           `rect_color_${idx}`,
@@ -530,7 +554,8 @@ function buildPaletteSpread(params: {
           cellW,
           swatchH,
           h,
-          p.self
+          p.self,
+          cornerRadius
         )
       );
 
@@ -539,34 +564,25 @@ function buildPaletteSpread(params: {
       storySelfs.push(textStorySelf);
       const rgb = hexToRgb(p.input.hex);
       const cmyk = hexToCmyk(p.input.hex);
-      const hexLabel = p.input.hex.toUpperCase();
 
       const paragraphs: StoryParagraph[] = [];
-      // Name
       paragraphs.push({
-        pointSize: 11,
-        leading: 14,
+        pointSize: 10,
+        leading: 13,
         lines: [p.uniqueName],
       });
-      // HEX
-      paragraphs.push({
-        pointSize: 9,
-        leading: 12,
-        lines: [`HEX ${hexLabel}`],
-      });
-      // CMYK oder RGB je nach Gruppe.
       if (p.input.group === "print") {
         if (cmyk) {
           paragraphs.push({
-            pointSize: 9,
-            leading: 12,
+            pointSize: 8,
+            leading: 11,
             lines: [`CMYK ${cmyk.c} ${cmyk.m} ${cmyk.y} ${cmyk.k}`],
           });
         }
       } else if (rgb) {
         paragraphs.push({
-          pointSize: 9,
-          leading: 12,
+          pointSize: 8,
+          leading: 11,
           lines: [`RGB ${rgb.r} ${rgb.g} ${rgb.b}`],
         });
       }
