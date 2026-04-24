@@ -19,6 +19,7 @@ type Brand = {
   name: string;
   slug: string;
   logo_url: string | null;
+  colors: string[];
 };
 
 type BrandColorPreview = {
@@ -31,7 +32,6 @@ type BrandColorPreview = {
 export default function BrandManager() {
   const [name, setName] = useState("");
   const [brands, setBrands] = useState<Brand[]>([]);
-  const [brandColors, setBrandColors] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,58 +54,59 @@ export default function BrandManager() {
     if (loadError) {
       setError(loadError.message);
       setBrands([]);
-      setBrandColors({});
       setLoading(false);
       return;
     }
 
-    const loadedBrands = data ?? [];
-    setBrands(loadedBrands);
+    const baseBrands = (data ?? []) as Array<Omit<Brand, "colors">>;
+    const brandIds = baseBrands.map((b) => b.id);
 
-    const brandIds = loadedBrands.map((b) => b.id);
-    if (brandIds.length === 0) {
-      setBrandColors({});
-      setLoading(false);
-      return;
-    }
+    let colorsByBrand = new Map<string, string[]>();
+    if (brandIds.length > 0) {
+      const { data: colorRows } = await supabase
+        .from("brand_colors")
+        .select("brand_id, hex, group, position")
+        .in("brand_id", brandIds)
+        .order("position", { ascending: true });
 
-    const { data: colorsData, error: colorsError } = await supabase
-      .from("brand_colors")
-      .select("brand_id, hex, group, position")
-      .in("brand_id", brandIds)
-      .order("position", { ascending: true });
-
-    if (colorsError) {
-      setBrandColors({});
-    } else {
-      const grouped: Record<string, string[]> = {};
-      const rows = (colorsData ?? []) as BrandColorPreview[];
-      const preferredOrder: BrandColorPreview["group"][] = ["print", "digital"];
-      for (const brandId of brandIds) {
-        const brandRows = rows.filter((r) => r.brand_id === brandId);
-        let picked: BrandColorPreview[] = [];
-        for (const group of preferredOrder) {
-          const subset = brandRows
-            .filter((r) => r.group === group)
-            .sort((a, b) => a.position - b.position);
-          if (subset.length > 0) {
-            picked = subset;
-            break;
+      if (colorRows) {
+        const rows = colorRows as BrandColorPreview[];
+        const preferredOrder: BrandColorPreview["group"][] = [
+          "print",
+          "digital",
+        ];
+        for (const brandId of brandIds) {
+          const brandRows = rows.filter((r) => r.brand_id === brandId);
+          let picked: BrandColorPreview[] = [];
+          for (const group of preferredOrder) {
+            const subset = brandRows
+              .filter((r) => r.group === group)
+              .sort((a, b) => a.position - b.position);
+            if (subset.length > 0) {
+              picked = subset;
+              break;
+            }
           }
+          const seen = new Set<string>();
+          const hexes: string[] = [];
+          for (const row of picked) {
+            const normalized = row.hex.toUpperCase();
+            if (seen.has(normalized)) continue;
+            seen.add(normalized);
+            hexes.push(normalized);
+            if (hexes.length >= 3) break;
+          }
+          colorsByBrand.set(brandId, hexes);
         }
-        const seen = new Set<string>();
-        const hexes: string[] = [];
-        for (const row of picked) {
-          const normalized = row.hex.toUpperCase();
-          if (seen.has(normalized)) continue;
-          seen.add(normalized);
-          hexes.push(normalized);
-          if (hexes.length >= 3) break;
-        }
-        grouped[brandId] = hexes;
       }
-      setBrandColors(grouped);
     }
+
+    setBrands(
+      baseBrands.map((b) => ({
+        ...b,
+        colors: colorsByBrand.get(b.id) ?? [],
+      }))
+    );
     setLoading(false);
   }, []);
 
@@ -215,7 +216,7 @@ export default function BrandManager() {
       setError(insertError.message);
       setSaving(false);
     } else if (data) {
-      setBrands((prev) => [...prev, data]);
+      setBrands((prev) => [...prev, { ...data, colors: [] }]);
       setSaving(false);
       closeForm();
     } else {
@@ -294,7 +295,7 @@ export default function BrandManager() {
                   name={brand.name}
                   slug={brand.slug}
                   logoUrl={brand.logo_url}
-                  colors={brandColors[brand.id]}
+                  colors={brand.colors}
                   onDelete={() => setPendingDelete(brand)}
                 />
               ))}

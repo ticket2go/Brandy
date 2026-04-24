@@ -4,7 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { supabase } from "@/lib/supabase/client";
 
-import { formatRgb as formatRgbFromLib, hexToRgb } from "@/lib/color";
+import {
+  formatCmyk,
+  formatRgb as formatRgbFromLib,
+  hexToCmyk,
+  hexToRgb,
+} from "@/lib/color";
 
 import AddCategoryDialog from "./AddCategoryDialog";
 import AddColorSwatch from "./AddColorSwatch";
@@ -15,9 +20,9 @@ import ColorEditorModal, {
 } from "./ColorEditorModal";
 import ColorSwatch, { type ColorSwatchData } from "./ColorSwatch";
 import ConfirmDialog from "./ConfirmDialog";
-import ImportColorsFromUrlModal, {
+import ImportColorsModal, {
   type ImportColorItem,
-} from "./ImportColorsFromUrlModal";
+} from "./ImportColorsModal";
 
 type Group = "print" | "digital";
 
@@ -62,6 +67,10 @@ function defaultValueFor(category: Category, color: Color): string {
   const key = category.key.toLowerCase();
   if (key === "hex") return color.hex.toUpperCase();
   if (key === "rgb") return formatRgb(color.hex);
+  if (key === "cmyk") {
+    const cmyk = hexToCmyk(color.hex);
+    return cmyk ? formatCmyk(cmyk) : color.hex.toUpperCase();
+  }
   return color.hex.toUpperCase();
 }
 
@@ -393,69 +402,139 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     setEditorColorId(null);
   };
 
-  const handleImportFromUrl = async (items: ImportColorItem[]) => {
+  const handleImportColors = async (items: ImportColorItem[]) => {
     if (items.length === 0) return;
-    const group: Group = "digital";
 
-    const digitalCategories = categories.filter((c) => c.group === group);
-    const hexCategory = digitalCategories.find(
-      (c) => c.key.toLowerCase() === "hex"
-    );
-    const rgbCategory = digitalCategories.find(
-      (c) => c.key.toLowerCase() === "rgb"
-    );
+    // Kategorien-Lookups pro Gruppe vorbereiten.
+    const findCategory = (group: Group, key: string) =>
+      categories.find(
+        (c) => c.group === group && c.key.toLowerCase() === key.toLowerCase()
+      );
 
-    const basePosition =
-      colors
-        .filter((c) => c.group === group)
-        .reduce((max, c) => Math.max(max, c.position), -1) + 1;
+    const existingHexByGroup: Record<Group, Set<string>> = {
+      print: new Set(
+        colors
+          .filter((c) => c.group === "print")
+          .map((c) => c.hex.toUpperCase())
+      ),
+      digital: new Set(
+        colors
+          .filter((c) => c.group === "digital")
+          .map((c) => c.hex.toUpperCase())
+      ),
+    };
 
-    const existingHexes = new Set(
-      colors
-        .filter((c) => c.group === group)
-        .map((c) => c.hex.toUpperCase())
-    );
-    const deduped = items.filter(
-      (item) => !existingHexes.has(item.hex.toUpperCase())
-    );
-    if (deduped.length === 0) return;
+    const nextPositionByGroup: Record<Group, number> = {
+      print:
+        colors
+          .filter((c) => c.group === "print")
+          .reduce((max, c) => Math.max(max, c.position), -1) + 1,
+      digital:
+        colors
+          .filter((c) => c.group === "digital")
+          .reduce((max, c) => Math.max(max, c.position), -1) + 1,
+    };
 
-    const insertRows = deduped.map((item, idx) => ({
-      brand_id: brandId,
-      group,
-      name: item.name,
-      hex: item.hex.toUpperCase(),
-      position: basePosition + idx,
-    }));
+    type Queued = {
+      insert: {
+        brand_id: string;
+        group: Group;
+        name: string;
+        hex: string;
+        position: number;
+      };
+      item: ImportColorItem;
+    };
+
+    const queued: Queued[] = [];
+    for (const item of items) {
+      const group: Group = item.target;
+      const hexUpper = item.hex.toUpperCase();
+      if (existingHexByGroup[group].has(hexUpper)) continue;
+      existingHexByGroup[group].add(hexUpper);
+      queued.push({
+        insert: {
+          brand_id: brandId,
+          group,
+          name: item.name,
+          hex: hexUpper,
+          position: nextPositionByGroup[group]++,
+        },
+        item,
+      });
+    }
+
+    if (queued.length === 0) return;
 
     const { data: insertedColors, error: insertError } = await supabase
       .from("brand_colors")
-      .insert(insertRows)
+      .insert(queued.map((q) => q.insert))
       .select("id, brand_id, group, name, hex, position");
 
     if (insertError) throw new Error(insertError.message);
     const created = (insertedColors ?? []) as Color[];
+
+    // Rueckabbildung auf Item anhand von group+hex+name (Reihenfolge ist nicht
+    // garantiert, wir matchen pragmatisch).
+    const matchItem = (color: Color): ImportColorItem | undefined => {
+      const idx = queued.findIndex(
+        (q) =>
+          q.insert.group === color.group &&
+          q.insert.hex === color.hex.toUpperCase() &&
+          q.insert.name === color.name
+      );
+      if (idx === -1) return undefined;
+      const [entry] = queued.splice(idx, 1);
+      return entry.item;
+    };
 
     const valueRows: Array<{
       color_id: string;
       category_id: string;
       value: string;
     }> = [];
+
     for (const row of created) {
-      if (hexCategory) {
-        valueRows.push({
-          color_id: row.id,
-          category_id: hexCategory.id,
-          value: row.hex.toUpperCase(),
-        });
-      }
-      if (rgbCategory) {
-        const rgb = hexToRgb(row.hex);
-        if (rgb) {
+      const item = matchItem(row);
+      const group = row.group;
+
+      if (group === "digital") {
+        const hexCategory = findCategory("digital", "hex");
+        const rgbCategory = findCategory("digital", "rgb");
+        if (hexCategory) {
           valueRows.push({
             color_id: row.id,
-            category_id: rgbCategory.id,
-            value: formatRgbFromLib(rgb),
+            category_id: hexCategory.id,
+            value: row.hex.toUpperCase(),
+          });
+        }
+        if (rgbCategory) {
+          const rgb = hexToRgb(row.hex);
+          if (rgb) {
+            valueRows.push({
+              color_id: row.id,
+              category_id: rgbCategory.id,
+              value: formatRgbFromLib(rgb),
+            });
+          }
+        }
+      } else {
+        const cmykCategory = findCategory("print", "cmyk");
+        const pantoneCategory = findCategory("print", "pantone");
+        if (cmykCategory && item?.cmyk) {
+          valueRows.push({
+            color_id: row.id,
+            category_id: cmykCategory.id,
+            value: formatCmyk(item.cmyk),
+          });
+        }
+        if (pantoneCategory && item?.spot) {
+          const parts = [item.spot.name];
+          if (item.spot.book) parts.unshift(item.spot.book);
+          valueRows.push({
+            color_id: row.id,
+            category_id: pantoneCategory.id,
+            value: parts.join(" · "),
           });
         }
       }
@@ -507,9 +586,11 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
       const items: ImportColorItem[] = candidates.map((c) => ({
         hex: c.hex,
         name: c.name,
+        target: "digital",
+        mode: "rgb",
       }));
 
-      await handleImportFromUrl(items);
+      await handleImportColors(items);
       setSwapMessage(
         `${candidates.length} Farbe${candidates.length === 1 ? "" : "n"} uebernommen.`
       );
@@ -706,8 +787,8 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
                   <button
                     type="button"
                     onClick={() => setImportOpen(true)}
-                    aria-label="Farben aus Website importieren"
-                    title="Farben aus Website importieren"
+                    aria-label="Farben importieren"
+                    title="Farben aus URL oder Creative Cloud Library importieren"
                     className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white transition hover:bg-black/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/40"
                   >
                     <svg
@@ -737,7 +818,7 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
                         strokeLinejoin="round"
                       />
                     </svg>
-                    Aus URL
+                    Importieren
                   </button>
                   <button
                     type="button"
@@ -790,10 +871,10 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
         onSubmit={handleAddCategory}
       />
 
-      <ImportColorsFromUrlModal
+      <ImportColorsModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onImport={handleImportFromUrl}
+        onImport={handleImportColors}
       />
 
       <ColorEditorModal

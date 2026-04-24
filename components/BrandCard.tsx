@@ -27,14 +27,48 @@ export default function BrandCard({
   onDelete,
 }: BrandCardProps) {
   const logoSrc = resolveLogoSrc(logoUrl);
-  const previewColors = (colors ?? []).slice(0, 3);
+  const swatches = (colors ?? []).slice(0, 3);
+
+  // Dezenter Verlauf aus den Brand-Farben, der aus der unteren rechten Ecke
+  // nach oben links ausklingt. Drei radiale Layer leicht versetzt, damit die
+  // Farben ineinander uebergehen. Jede Farbe wird nur mit geringer Alpha
+  // eingesetzt (~28 %), damit die Karte insgesamt schwarz bleibt.
+  const glowLayers: string[] = [];
+  if (swatches.length > 0) {
+    const offsets = [
+      { x: "100%", y: "100%", alpha: "80", fade: "70%" }, // ~50 %
+      { x: "85%", y: "115%", alpha: "66", fade: "65%" }, // ~40 %
+      { x: "115%", y: "85%", alpha: "66", fade: "65%" }, // ~40 %
+    ];
+    for (let i = 0; i < swatches.length; i += 1) {
+      const hex = swatches[i];
+      const off = offsets[i] ?? offsets[0];
+      glowLayers.push(
+        `radial-gradient(circle at ${off.x} ${off.y}, ${hex}${off.alpha} 0%, ${hex}00 ${off.fade})`
+      );
+    }
+  }
+  const glowBackground = glowLayers.join(", ");
+
+  const textMain = "text-white";
+  const textMuted = "text-white/50";
+  const deleteBtnClass =
+    "bg-white/10 text-white/60 hover:bg-red-500/20 hover:text-red-300 focus:ring-white/20";
+  const focusRingClass = "focus-visible:ring-white/40";
 
   return (
-    <article className="group relative flex h-40 w-64 shrink-0 flex-col justify-between rounded-2xl border border-black/10 bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+    <article className="group relative flex h-40 w-64 shrink-0 flex-col justify-between overflow-hidden rounded-2xl bg-black p-5 transition-transform hover:-translate-y-0.5">
+      {glowBackground && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0"
+          style={{ backgroundImage: glowBackground }}
+        />
+      )}
       <Link
         href={`/brands/${slug}`}
         aria-label={`Brand "${name}" öffnen`}
-        className="absolute inset-0 z-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-black/40"
+        className={`absolute inset-0 z-[1] rounded-2xl focus:outline-none focus-visible:ring-2 ${focusRingClass}`}
       />
 
       {logoSrc && (
@@ -42,7 +76,7 @@ export default function BrandCard({
         <img
           src={logoSrc}
           alt={`${name} Logo`}
-          className="pointer-events-none absolute left-3 top-3 z-[1] h-9 w-9 rounded-lg border border-black/10 bg-white object-contain p-1"
+          className="pointer-events-none absolute left-3 top-3 z-[2] h-9 w-9 rounded-full bg-white object-cover"
         />
       )}
 
@@ -56,7 +90,7 @@ export default function BrandCard({
           }}
           aria-label={`Brand "${name}" löschen`}
           title="Löschen"
-          className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-black/40 opacity-0 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-black/10 group-hover:opacity-100"
+          className={`absolute right-3 top-3 z-[3] flex h-7 w-7 items-center justify-center rounded-full opacity-0 transition focus:opacity-100 focus:outline-none focus:ring-2 group-hover:opacity-100 ${deleteBtnClass}`}
         >
           <svg
             width="12"
@@ -77,26 +111,31 @@ export default function BrandCard({
 
       <div aria-hidden className="h-9" />
 
-      <footer className="pointer-events-none relative z-[1] flex items-end justify-between gap-2">
+      <footer className="pointer-events-none relative z-[2] flex items-end justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <h2 className="line-clamp-2 text-xl font-semibold tracking-tight text-black">
+          <h2
+            className={`line-clamp-2 text-xl font-semibold tracking-tight ${textMain}`}
+          >
             {name}
           </h2>
-          <span className="text-xs uppercase tracking-widest text-black/40">
+          <span
+            className={`text-xs uppercase tracking-widest ${textMuted}`}
+          >
             Brand
           </span>
         </div>
-        {previewColors.length > 0 && (
+
+        {swatches.length > 0 && (
           <div
             aria-label="Brand-Farben"
-            className="flex shrink-0 items-center -space-x-1"
+            className="flex shrink-0 items-center gap-1.5"
           >
-            {previewColors.map((hex, idx) => (
+            {swatches.map((hex, idx) => (
               <span
                 key={`${hex}-${idx}`}
-                aria-hidden
-                className="h-3.5 w-3.5 rounded-full border border-black/10 shadow-[0_0_0_1.5px_rgba(255,255,255,0.9)]"
+                className="h-3 w-3 rounded-full"
                 style={{ backgroundColor: hex }}
+                title={hex}
               />
             ))}
           </div>

@@ -1,0 +1,958 @@
+import JSZip from "jszip";
+
+import {
+  clamp,
+  cmykToRgb,
+  rgbToHex,
+  type Cmyk,
+  type Rgb,
+} from "./color";
+
+export type { Rgb, Cmyk } from "./color";
+
+export type CclibsColorMode = "rgb" | "cmyk" | "lab" | "gray" | "spot";
+
+export type CclibsColor = {
+  name: string;
+  hex: string;
+  rgb: Rgb;
+  cmyk?: Cmyk;
+  lab?: { l: number; a: number; b: number };
+  spot?: { book?: string; name: string };
+  mode: CclibsColorMode;
+  group?: string;
+};
+
+type UnknownObject = Record<string, unknown>;
+
+function isObject(value: unknown): value is UnknownObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && !Number.isNaN(value)) return value;
+  if (typeof value === "string") {
+    const n = parseFloat(value);
+    if (!Number.isNaN(n)) return n;
+  }
+  return null;
+}
+
+function normaliseRgbChannel(raw: number): number {
+  if (raw <= 1) return clamp(Math.round(raw * 255), 0, 255);
+  return clamp(Math.round(raw), 0, 255);
+}
+
+function readRgbValue(value: unknown): Rgb | null {
+  if (isObject(value)) {
+    const r = asNumber(value.r ?? value.red);
+    const g = asNumber(value.g ?? value.green);
+    const b = asNumber(value.b ?? value.blue);
+    if (r !== null && g !== null && b !== null) {
+      return {
+        r: normaliseRgbChannel(r),
+        g: normaliseRgbChannel(g),
+        b: normaliseRgbChannel(b),
+      };
+    }
+  }
+  if (Array.isArray(value) && value.length >= 3) {
+    const r = asNumber(value[0]);
+    const g = asNumber(value[1]);
+    const b = asNumber(value[2]);
+    if (r !== null && g !== null && b !== null) {
+      return {
+        r: normaliseRgbChannel(r),
+        g: normaliseRgbChannel(g),
+        b: normaliseRgbChannel(b),
+      };
+    }
+  }
+  return null;
+}
+
+function normaliseCmykChannel(raw: number): number {
+  if (raw <= 1) return clamp(Math.round(raw * 100), 0, 100);
+  return clamp(Math.round(raw), 0, 100);
+}
+
+function readCmykValue(value: unknown): Cmyk | null {
+  if (isObject(value)) {
+    const c = asNumber(value.c ?? value.cyan);
+    const m = asNumber(value.m ?? value.magenta);
+    const y = asNumber(value.y ?? value.yellow);
+    const k = asNumber(value.k ?? value.black ?? value.key);
+    if (c !== null && m !== null && y !== null && k !== null) {
+      return {
+        c: normaliseCmykChannel(c),
+        m: normaliseCmykChannel(m),
+        y: normaliseCmykChannel(y),
+        k: normaliseCmykChannel(k),
+      };
+    }
+  }
+  if (Array.isArray(value) && value.length >= 4) {
+    const c = asNumber(value[0]);
+    const m = asNumber(value[1]);
+    const y = asNumber(value[2]);
+    const k = asNumber(value[3]);
+    if (c !== null && m !== null && y !== null && k !== null) {
+      return {
+        c: normaliseCmykChannel(c),
+        m: normaliseCmykChannel(m),
+        y: normaliseCmykChannel(y),
+        k: normaliseCmykChannel(k),
+      };
+    }
+  }
+  return null;
+}
+
+function readLabValue(
+  value: unknown
+): { l: number; a: number; b: number } | null {
+  if (isObject(value)) {
+    const l = asNumber(value.l ?? value.L ?? value.lightness);
+    const a = asNumber(value.a ?? value.A);
+    const b = asNumber(value.b ?? value.B);
+    if (l !== null && a !== null && b !== null) return { l, a, b };
+  }
+  if (Array.isArray(value) && value.length >= 3) {
+    const l = asNumber(value[0]);
+    const a = asNumber(value[1]);
+    const b = asNumber(value[2]);
+    if (l !== null && a !== null && b !== null) return { l, a, b };
+  }
+  return null;
+}
+
+// Approximative LAB -> sRGB Konvertierung (D65), ausreichend fuer Screen-Vorschau.
+function labToRgb(l: number, a: number, b: number): Rgb {
+  const y0 = (l + 16) / 116;
+  const x0 = a / 500 + y0;
+  const z0 = y0 - b / 200;
+  const eps = 216 / 24389;
+  const kappa = 24389 / 27;
+
+  const fInv = (t: number) =>
+    Math.pow(t, 3) > eps ? Math.pow(t, 3) : (116 * t - 16) / kappa;
+
+  const xr = fInv(x0);
+  const yr = l > 8 ? Math.pow(y0, 3) : l / kappa;
+  const zr = fInv(z0);
+
+  const X = xr * 0.95047;
+  const Y = yr * 1.0;
+  const Z = zr * 1.08883;
+
+  let r = X * 3.2406 + Y * -1.5372 + Z * -0.4986;
+  let g = X * -0.9689 + Y * 1.8758 + Z * 0.0415;
+  let bl = X * 0.0557 + Y * -0.204 + Z * 1.057;
+
+  const gamma = (c: number) =>
+    c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+
+  r = gamma(r);
+  g = gamma(g);
+  bl = gamma(bl);
+
+  return {
+    r: clamp(Math.round(r * 255), 0, 255),
+    g: clamp(Math.round(g * 255), 0, 255),
+    b: clamp(Math.round(bl * 255), 0, 255),
+  };
+}
+
+type NormalisedRepresentation = {
+  mode: CclibsColorMode;
+  rgb: Rgb;
+  cmyk?: Cmyk;
+  lab?: { l: number; a: number; b: number };
+  spot?: { book?: string; name: string };
+};
+
+function normaliseMode(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw.toLowerCase();
+}
+
+function readSpotInfo(
+  obj: UnknownObject
+): { book?: string; name: string } | null {
+  const spotField = obj.spot;
+  if (isObject(spotField)) {
+    const name =
+      typeof spotField.spotColorName === "string"
+        ? spotField.spotColorName
+        : typeof spotField.name === "string"
+          ? spotField.name
+          : typeof spotField.swatchName === "string"
+            ? spotField.swatchName
+            : null;
+    if (!name) return null;
+    const book =
+      typeof spotField.bookName === "string"
+        ? spotField.bookName
+        : typeof spotField.book === "string"
+          ? spotField.book
+          : typeof spotField.library === "string"
+            ? spotField.library
+            : undefined;
+    return { name, book };
+  }
+  return null;
+}
+
+// Eine "Representation" in CC-Libraries hat `mode` + `value`. Wir akzeptieren
+// zusaetzlich flache Strukturen mit `colorSpace` oder direkten RGB/CMYK-Feldern.
+// Laut Spec: { "color": { "mode": "CMYK", "value": {...}, "spot": {...} } }
+function parseRepresentation(
+  obj: UnknownObject
+): NormalisedRepresentation | null {
+  const modeRaw = normaliseMode(obj.mode ?? obj.colorSpace ?? obj.space);
+  const value = obj.value;
+  const spot = readSpotInfo(obj);
+
+  if (!modeRaw) {
+    // Ohne `mode` koennen wir keine zuverlaessige Repraesentation ableiten.
+    // Ausnahme: `type: "spot"` mit `alternate`-Struktur (aelteres Format).
+    if (obj.type === "spot" || obj.colorType === "spot") {
+      const fallback = obj.alternate ?? obj.alternateValue;
+      if (isObject(fallback)) {
+        const inner = parseRepresentation(fallback);
+        if (inner && spot) {
+          return { ...inner, mode: "spot", spot };
+        }
+      }
+    }
+    return null;
+  }
+
+  const applySpot = (
+    rep: NormalisedRepresentation
+  ): NormalisedRepresentation =>
+    spot ? { ...rep, mode: "spot", spot } : rep;
+
+  if (modeRaw === "rgb" || modeRaw === "srgb") {
+    const rgb = readRgbValue(value ?? obj);
+    if (rgb) return applySpot({ mode: "rgb", rgb });
+  }
+
+  if (modeRaw === "cmyk") {
+    const cmyk = readCmykValue(value ?? obj);
+    if (cmyk)
+      return applySpot({ mode: "cmyk", rgb: cmykToRgb(cmyk), cmyk });
+  }
+
+  if (modeRaw === "lab") {
+    const lab = readLabValue(value ?? obj);
+    if (lab)
+      return applySpot({
+        mode: "lab",
+        rgb: labToRgb(lab.l, lab.a, lab.b),
+        lab,
+      });
+  }
+
+  if (modeRaw === "gray" || modeRaw === "grayscale") {
+    const g = asNumber(
+      isObject(value) ? value.g ?? value.gray ?? value.value : value
+    );
+    if (g !== null) {
+      const v = normaliseRgbChannel(g);
+      return applySpot({ mode: "gray", rgb: { r: v, g: v, b: v } });
+    }
+  }
+
+  if (modeRaw === "hsb" || modeRaw === "hsv") {
+    // HSB/HSV: h in 0-360, s/b in 0-1 oder 0-100
+    const hsb = isObject(value) ? value : obj;
+    const h = asNumber(hsb.h ?? hsb.hue);
+    const sRaw = asNumber(hsb.s ?? hsb.saturation);
+    const bRaw = asNumber(hsb.b ?? hsb.v ?? hsb.brightness);
+    if (h !== null && sRaw !== null && bRaw !== null) {
+      const s = sRaw > 1 ? sRaw / 100 : sRaw;
+      const br = bRaw > 1 ? bRaw / 100 : bRaw;
+      const c = br * s;
+      const hp = (((h % 360) + 360) % 360) / 60;
+      const x = c * (1 - Math.abs((hp % 2) - 1));
+      let r1 = 0,
+        g1 = 0,
+        b1 = 0;
+      if (hp < 1) [r1, g1, b1] = [c, x, 0];
+      else if (hp < 2) [r1, g1, b1] = [x, c, 0];
+      else if (hp < 3) [r1, g1, b1] = [0, c, x];
+      else if (hp < 4) [r1, g1, b1] = [0, x, c];
+      else if (hp < 5) [r1, g1, b1] = [x, 0, c];
+      else [r1, g1, b1] = [c, 0, x];
+      const m = br - c;
+      const rgb: Rgb = {
+        r: clamp(Math.round((r1 + m) * 255), 0, 255),
+        g: clamp(Math.round((g1 + m) * 255), 0, 255),
+        b: clamp(Math.round((b1 + m) * 255), 0, 255),
+      };
+      return applySpot({ mode: "rgb", rgb });
+    }
+  }
+
+  return null;
+}
+
+function findNearestName(ancestry: UnknownObject[]): string {
+  for (let i = ancestry.length - 1; i >= 0; i -= 1) {
+    const node = ancestry[i];
+    const name = node.name;
+    if (typeof name === "string" && name.trim().length > 0) return name.trim();
+  }
+  return "";
+}
+
+function nodeGroupName(node: UnknownObject): string | undefined {
+  const type = typeof node.type === "string" ? node.type.toLowerCase() : "";
+  const name = typeof node.name === "string" ? node.name.trim() : "";
+  if (!name) return undefined;
+  if (
+    /vnd\.adobe\.element\.group/.test(type) ||
+    /vnd\.adobe\.element\.colortheme/.test(type) ||
+    /colortheme/.test(type) ||
+    // Strukturelle Hinweise: Theme-Knoten haben meist `swatches` / `colortheme`,
+    // Gruppen-Knoten haben `children` mit mehreren Color-Elementen.
+    isObject(node.colortheme) ||
+    Array.isArray((node as UnknownObject).swatches)
+  ) {
+    return name;
+  }
+  return undefined;
+}
+
+function isThemeNode(node: UnknownObject): boolean {
+  const type = typeof node.type === "string" ? node.type.toLowerCase() : "";
+  return (
+    /colortheme/.test(type) ||
+    isObject(node.colortheme) ||
+    Array.isArray(node.swatches)
+  );
+}
+
+type WalkContext = {
+  group?: string;
+  themeCounter?: { value: number };
+  insideTheme: boolean;
+};
+
+function walkJson(
+  node: unknown,
+  ancestry: UnknownObject[],
+  ctx: WalkContext,
+  collect: (color: CclibsColor) => void
+): void {
+  if (Array.isArray(node)) {
+    for (const entry of node) walkJson(entry, ancestry, ctx, collect);
+    return;
+  }
+  if (!isObject(node)) return;
+
+  const nextAncestry = [...ancestry, node];
+  const discoveredGroup = nodeGroupName(node);
+  const nextGroup = discoveredGroup ?? ctx.group;
+  const nextInsideTheme = ctx.insideTheme || isThemeNode(node);
+  // Theme-Swatches bekommen eine eigene Nummerierung, weil sie selten eigene
+  // Namen haben. Wir initialisieren den Counter beim ersten Theme-Ancestor.
+  const nextCounter =
+    !ctx.insideTheme && nextInsideTheme
+      ? { value: 0 }
+      : ctx.themeCounter;
+  const nextCtx: WalkContext = {
+    group: nextGroup,
+    themeCounter: nextCounter,
+    insideTheme: nextInsideTheme,
+  };
+
+  const rep = parseRepresentation(node);
+  if (rep) {
+    const spotName = rep.spot?.name;
+    let name = spotName && spotName.trim() ? spotName.trim() : "";
+    if (!name) {
+      const nearest = findNearestName(nextAncestry);
+      const isOwnName =
+        typeof node.name === "string" && node.name.trim() === nearest;
+      if (isOwnName) {
+        name = nearest;
+      } else if (ctx.insideTheme && nextGroup && nearest === nextGroup) {
+        // Nur der Theme-Name haengt am Eintrag -> durchnummerieren
+        ctx.themeCounter!.value += 1;
+        name = `${nextGroup} ${ctx.themeCounter!.value}`;
+      } else {
+        name = nearest || "Farbe";
+      }
+    }
+    collect({
+      name,
+      hex: rgbToHex(rep.rgb),
+      rgb: rep.rgb,
+      cmyk: rep.cmyk,
+      lab: rep.lab,
+      spot: rep.spot,
+      mode: rep.mode,
+      group: ctx.group,
+    });
+    if (Array.isArray(node.representations)) {
+      for (const sibling of node.representations) {
+        if (sibling === node) continue;
+        walkJson(sibling, nextAncestry, nextCtx, collect);
+      }
+    }
+    return;
+  }
+
+  for (const value of Object.values(node)) {
+    walkJson(value, nextAncestry, nextCtx, collect);
+  }
+}
+
+function colorKey(color: CclibsColor): string {
+  const base = color.hex.toUpperCase();
+  const g = color.group ?? "";
+  if (color.spot) return `${g}|spot:${color.spot.name}|${base}`;
+  if (color.cmyk)
+    return `${g}|cmyk:${color.cmyk.c}-${color.cmyk.m}-${color.cmyk.y}-${color.cmyk.k}`;
+  return `${g}|rgb:${base}`;
+}
+
+// CC-Library-Exports sind DCX/UCF-Container. Representations werden oft als
+// reine UUID-Dateien ohne Extension gespeichert. Wir muessen deshalb jeden
+// Entry potenziell als JSON betrachten und nicht nur `.json`-Dateien.
+const MAX_TEXT_SIZE = 4 * 1024 * 1024; // 4 MiB pro Datei
+const BINARY_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "tiff",
+  "tif",
+  "svg",
+  "pdf",
+  "psd",
+  "ai",
+  "indd",
+  "mp4",
+  "mov",
+  "webm",
+  "zip",
+  "otf",
+  "ttf",
+  "woff",
+  "woff2",
+  "eot",
+  "icc",
+  "icm",
+]);
+
+function looksBinary(name: string): boolean {
+  const lastSegment = name.split("/").pop() ?? name;
+  const dot = lastSegment.lastIndexOf(".");
+  if (dot === -1) return false;
+  const ext = lastSegment.slice(dot + 1).toLowerCase();
+  return BINARY_EXTENSIONS.has(ext);
+}
+
+function tryJsonParse(text: string): unknown | null {
+  const trimmed = text.trimStart();
+  if (trimmed.length === 0) return null;
+  const first = trimmed[0];
+  if (first !== "{" && first !== "[") return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+export type CclibsDiagnostics = {
+  jsonFileCount: number;
+  groupNames: string[];
+  topLevelKeys: string[];
+};
+
+export type CclibsParseResult = {
+  colors: CclibsColor[];
+  diagnostics: CclibsDiagnostics;
+};
+
+export async function parseCclibsFile(file: File): Promise<CclibsParseResult> {
+  if (file.size === 0) throw new Error("Datei ist leer.");
+  // CC-Library-Exports kommen mit .cclibs oder .cclib; beide sind ZIP-Container.
+  const buffer = await file.arrayBuffer();
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(buffer);
+  } catch {
+    throw new Error(
+      "Datei konnte nicht gelesen werden. Erwartet wird ein .cclibs / .cclib-Export."
+    );
+  }
+
+  const colors: CclibsColor[] = [];
+  const seen = new Set<string>();
+
+  const entries = Object.values(zip.files).filter(
+    (entry) => !entry.dir && !looksBinary(entry.name)
+  );
+
+  // 1. Alle Files laden und als JSON parsen (soweit moeglich).
+  const parsedFiles: Array<{ path: string; data: unknown }> = [];
+  for (const entry of entries) {
+    let text: string;
+    try {
+      text = await entry.async("string");
+    } catch {
+      continue;
+    }
+    if (text.length > MAX_TEXT_SIZE) continue;
+    const parsed = tryJsonParse(text);
+    if (parsed === null) continue;
+    parsedFiles.push({ path: entry.name, data: parsed });
+  }
+
+  // 2. Element-Manifeste einsammeln:
+  //    - Representation-Path -> Element-Name
+  //    - Element-Id -> Name, Element-Id -> Group-Id, Group-Id -> Group-Name
+  const elementIndex = buildElementIndex(parsedFiles);
+
+  const detectedGroupNames = new Set<string>(elementIndex.groupNameById.values());
+  if (typeof console !== "undefined") {
+    console.info(
+      `[cclibs] ${parsedFiles.length} JSON-Files, ${detectedGroupNames.size} Gruppen erkannt:`,
+      Array.from(detectedGroupNames)
+    );
+  }
+
+  // 3. Farben extrahieren. Wenn der Walker keinen Namen findet, den Namen aus
+  // dem Element-Manifest verwenden, das auf diese Datei zeigt.
+  for (const { path, data } of parsedFiles) {
+    const context = resolveContextForPath(path, elementIndex);
+    walkJson(
+      data,
+      [],
+      { group: context.group, insideTheme: false },
+      (color) => {
+        const useFallbackName =
+          (!color.name ||
+            color.name === "Farbe" ||
+            color.name.startsWith("Farbe")) &&
+          context.name;
+        const finalColor: CclibsColor = {
+          ...color,
+          name: useFallbackName ? context.name! : color.name,
+          group: color.group ?? context.group,
+        };
+        const key = colorKey(finalColor);
+        if (seen.has(key)) return;
+        seen.add(key);
+        colors.push(finalColor);
+      }
+    );
+  }
+
+  // 4. Fallback-Pass: Wenn bis hierhin keine Gruppen zugewiesen wurden,
+  // versuche es anhand der Farbnamen-Konvention (z.B. "Wildeboer-RGB Rot",
+  // wobei der Gruppenteil als Prefix getrennt mit " " oder " / " auftaucht).
+  const colorsWithoutGroup = colors.filter((c) => !c.group);
+  if (
+    colorsWithoutGroup.length > 0 &&
+    (detectedGroupNames.size === 0 ||
+      colorsWithoutGroup.length === colors.length)
+  ) {
+    // Versuch 1: Anhand aller JSON-Dateien nach Strukturen mit benanntem
+    // Parent suchen, dessen Kinder-Array mehrere Farbknoten enthaelt.
+    const inferred = inferGroupsByStructure(parsedFiles);
+    for (const color of colors) {
+      if (color.group) continue;
+      const g = inferred.get(color.hex.toUpperCase());
+      if (g) color.group = g;
+    }
+  }
+
+  const diagnostics: CclibsDiagnostics = {
+    jsonFileCount: parsedFiles.length,
+    groupNames: Array.from(
+      new Set(
+        colors
+          .map((c) => c.group)
+          .filter((g): g is string => typeof g === "string" && g.length > 0)
+      )
+    ).sort((a, b) => a.localeCompare(b, "de")),
+    topLevelKeys: collectTopLevelKeys(parsedFiles),
+  };
+
+  if (typeof console !== "undefined") {
+    console.info(`[cclibs] Ergebnis`, {
+      colors: colors.length,
+      groups: diagnostics.groupNames,
+      topLevelKeys: diagnostics.topLevelKeys,
+    });
+  }
+
+  if (colors.length === 0) {
+    if (parsedFiles.length === 0) {
+      throw new Error(
+        "Keine JSON-Daten im Archiv gefunden. Moeglicherweise liegt ein anderes Format vor."
+      );
+    }
+    const hintText = diagnostics.topLevelKeys.slice(0, 10).join(", ");
+    throw new Error(
+      `Keine Farb-Repraesentationen gefunden (${parsedFiles.length} JSON-Dateien geprueft).` +
+        (hintText ? ` Gefundene Schluessel: ${hintText}.` : "")
+    );
+  }
+
+  return { colors, diagnostics };
+}
+
+function collectTopLevelKeys(
+  parsedFiles: Array<{ path: string; data: unknown }>
+): string[] {
+  const hints = new Set<string>();
+  for (const { data } of parsedFiles) {
+    collectHints(data, hints, 0);
+    if (hints.size > 30) break;
+  }
+  return Array.from(hints).slice(0, 20);
+}
+
+// Sucht in der JSON-Struktur nach Knoten, die `name` + Array mit mehreren
+// Eintraegen haben, die ihrerseits Farb-Repraesentationen enthalten. Fuer
+// jede darin gefundene Farbe merken wir uns den Namen des Parents als
+// potenzielle Gruppe (indexiert nach HEX).
+function inferGroupsByStructure(
+  parsedFiles: Array<{ path: string; data: unknown }>
+): Map<string, string> {
+  const map = new Map<string, string>();
+
+  const visit = (node: unknown, activeGroup: string | undefined): void => {
+    if (Array.isArray(node)) {
+      for (const entry of node) visit(entry, activeGroup);
+      return;
+    }
+    if (!isObject(node)) return;
+
+    // Kandidaten-Felder fuer Kind-Listen
+    const childFields: unknown[] = [];
+    for (const key of [
+      "children",
+      "elements",
+      "members",
+      "swatches",
+      "colors",
+      "items",
+    ]) {
+      const v = (node as UnknownObject)[key];
+      if (Array.isArray(v)) childFields.push(v);
+    }
+
+    const name = typeof node.name === "string" ? node.name.trim() : "";
+    // Wenn dieser Knoten einen Namen hat und Kind-Listen enthaelt, deren
+    // Inhalte mindestens eine Farbe darstellen, nehmen wir ihn als Gruppe an.
+    let promotedGroup = activeGroup;
+    if (name && childFields.length > 0) {
+      // Pruefe, ob unter diesem Knoten direkt mindestens eine Farbe liegt.
+      let hasColor = false;
+      const precheck = (inner: unknown): void => {
+        if (hasColor) return;
+        if (Array.isArray(inner)) {
+          for (const entry of inner) precheck(entry);
+          return;
+        }
+        if (!isObject(inner)) return;
+        if (parseRepresentation(inner)) {
+          hasColor = true;
+          return;
+        }
+        for (const v of Object.values(inner)) precheck(v);
+      };
+      for (const field of childFields) precheck(field);
+      if (hasColor) promotedGroup = name;
+    }
+
+    const rep = parseRepresentation(node);
+    if (rep && promotedGroup) {
+      const hex = rgbToHex(rep.rgb).toUpperCase();
+      if (!map.has(hex)) map.set(hex, promotedGroup);
+    }
+
+    for (const value of Object.values(node)) visit(value, promotedGroup);
+  };
+
+  for (const { data } of parsedFiles) visit(data, undefined);
+
+  return map;
+}
+
+function collectHints(
+  data: unknown,
+  hints: Set<string>,
+  depth: number
+): void {
+  if (depth > 3) return;
+  if (Array.isArray(data)) {
+    for (const entry of data.slice(0, 5)) collectHints(entry, hints, depth + 1);
+    return;
+  }
+  if (!isObject(data)) return;
+  for (const key of Object.keys(data)) {
+    hints.add(key);
+    if (hints.size > 30) return;
+  }
+  for (const value of Object.values(data).slice(0, 10)) {
+    collectHints(value, hints, depth + 1);
+  }
+}
+
+type ElementIndex = {
+  // Pfade der Representations -> Element-Id
+  idByPath: Map<string, string>;
+  // Element-Id -> Anzeigename
+  nameById: Map<string, string>;
+  // Element-Id -> Group-Id
+  groupIdByElementId: Map<string, string>;
+  // Group-Id -> Group-Name
+  groupNameById: Map<string, string>;
+  // Fallback: Pfade -> Name (wenn keine Id aufgeloest werden konnte)
+  nameByPath: Map<string, string>;
+  // Pfad-Praefix -> Gruppen-Name. Wenn ein Farb-File unter diesem Praefix
+  // liegt, wird der Name als Gruppe verwendet.
+  groupByPathPrefix: Array<{ prefix: string; name: string }>;
+};
+
+function buildElementIndex(
+  parsedFiles: Array<{ path: string; data: unknown }>
+): ElementIndex {
+  const idx: ElementIndex = {
+    idByPath: new Map(),
+    nameById: new Map(),
+    groupIdByElementId: new Map(),
+    groupNameById: new Map(),
+    nameByPath: new Map(),
+    groupByPathPrefix: [],
+  };
+
+  // Durchwandere alle JSONs und sammle Element-Knoten ein.
+  // CC Library Elemente haben `id` oder `elementId` + `name` + `representations`
+  // oder (fuer Gruppen) `children`.
+  for (const { path: originPath, data } of parsedFiles) {
+    const stack: unknown[] = [data];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (Array.isArray(node)) {
+        for (const entry of node) stack.push(entry);
+        continue;
+      }
+      if (!isObject(node)) continue;
+
+      const typeField =
+        typeof node.type === "string" ? node.type.toLowerCase() : "";
+      const id =
+        typeof node.id === "string"
+          ? node.id
+          : typeof node.elementId === "string"
+            ? node.elementId
+            : typeof node.compId === "string"
+              ? node.compId
+              : "";
+      const name =
+        typeof node.name === "string" ? node.name.trim() : "";
+
+      // Container: klassische Groups ODER Color-Themes gelten als Gruppe.
+      const isContainer =
+        /vnd\.adobe\.element\.group/.test(typeField) ||
+        /vnd\.adobe\.element\.colortheme/.test(typeField) ||
+        /colortheme/.test(typeField) ||
+        isObject(node.colortheme) ||
+        Array.isArray(node.swatches);
+
+      if (isContainer && id && name) {
+        idx.groupNameById.set(id, name);
+        // Kinder verweisen oft per id in `children[].id` oder `elements[].id`.
+        const children =
+          (Array.isArray(node.children) ? node.children : null) ??
+          (Array.isArray(node.elements) ? node.elements : null) ??
+          (Array.isArray((node as UnknownObject).members)
+            ? ((node as UnknownObject).members as unknown[])
+            : null);
+        if (children) {
+          for (const child of children) {
+            let childId: string | null = null;
+            if (typeof child === "string") childId = child;
+            else if (isObject(child)) {
+              const cid =
+                (typeof child.id === "string" && child.id) ||
+                (typeof child.elementId === "string" && child.elementId) ||
+                (typeof child.compId === "string" && child.compId) ||
+                (typeof child.href === "string" && child.href) ||
+                "";
+              if (cid) childId = cid;
+            }
+            if (childId) idx.groupIdByElementId.set(childId, id);
+          }
+        }
+        // Pfad-Praefix-Basiertes Matching: wenn die Container-Representation
+        // in einem Ordner liegt (z.B. library/elements/<uuid>/), wird dieser
+        // Ordner als Gruppen-Praefix registriert.
+        const reps = Array.isArray(node.representations)
+          ? node.representations
+          : [];
+        for (const rep of reps) {
+          if (!isObject(rep)) continue;
+          const p =
+            typeof rep.path === "string"
+              ? rep.path
+              : typeof rep.href === "string"
+                ? rep.href
+                : typeof rep.componentId === "string"
+                  ? rep.componentId
+                  : null;
+          if (!p) continue;
+          const abs = normalisePath(p, originPath);
+          const prefix = abs.includes("/")
+            ? abs.slice(0, abs.lastIndexOf("/"))
+            : abs;
+          if (prefix) idx.groupByPathPrefix.push({ prefix, name });
+        }
+        // Zusaetzlich Pfad des eigenen Manifest-Files selbst als Praefix nutzen.
+        const ownPrefix = originPath.includes("/")
+          ? originPath.slice(0, originPath.lastIndexOf("/"))
+          : "";
+        if (ownPrefix) idx.groupByPathPrefix.push({ prefix: ownPrefix, name });
+      }
+
+      if (id && name && !isContainer) idx.nameById.set(id, name);
+
+      // Gruppen-Referenz am Element
+      const parentGroup =
+        (typeof node.parentId === "string" && node.parentId) ||
+        (typeof node.groupId === "string" && node.groupId) ||
+        (typeof node.parent === "string" && node.parent) ||
+        "";
+      if (id && parentGroup) idx.groupIdByElementId.set(id, parentGroup);
+      if (isObject(node.group)) {
+        const gId =
+          (typeof node.group.id === "string" && node.group.id) ||
+          (typeof node.group.elementId === "string" && node.group.elementId) ||
+          "";
+        const gName =
+          typeof node.group.name === "string" ? node.group.name.trim() : "";
+        if (id && gId) idx.groupIdByElementId.set(id, gId);
+        if (gId && gName) idx.groupNameById.set(gId, gName);
+      }
+
+      // Representations mit Pfaden auf Id mappen
+      if (id && Array.isArray(node.representations)) {
+        for (const rep of node.representations) {
+          if (!isObject(rep)) continue;
+          const p =
+            typeof rep.path === "string"
+              ? rep.path
+              : typeof rep.href === "string"
+                ? rep.href
+                : typeof rep.componentId === "string"
+                  ? rep.componentId
+                  : null;
+          if (p) {
+            const abs = normalisePath(p, originPath);
+            idx.idByPath.set(abs, id);
+            idx.idByPath.set(p, id);
+            if (name) {
+              idx.nameByPath.set(abs, name);
+              idx.nameByPath.set(p, name);
+            }
+          }
+        }
+      }
+
+      for (const value of Object.values(node)) stack.push(value);
+    }
+  }
+
+  return idx;
+}
+
+function normalisePath(refPath: string, originPath: string): string {
+  if (refPath.startsWith("/")) return refPath.slice(1);
+  const originDir = originPath.includes("/")
+    ? originPath.slice(0, originPath.lastIndexOf("/") + 1)
+    : "";
+  return `${originDir}${refPath}`;
+}
+
+function resolveContextForPath(
+  path: string,
+  idx: ElementIndex
+): { name?: string; group?: string } {
+  // Id anhand Pfad finden
+  let id = idx.idByPath.get(path);
+  if (!id) {
+    const segments = path.split("/").filter(Boolean);
+    for (let i = segments.length; i > 0 && !id; i -= 1) {
+      const subpath = segments.slice(0, i).join("/");
+      id = idx.idByPath.get(subpath);
+    }
+    if (!id) {
+      const lastSeg = segments[segments.length - 1];
+      if (lastSeg) id = idx.idByPath.get(lastSeg);
+    }
+  }
+
+  let name: string | undefined;
+  if (id) name = idx.nameById.get(id);
+  if (!name) {
+    name = idx.nameByPath.get(path);
+    if (!name) {
+      const segments = path.split("/").filter(Boolean);
+      for (let i = segments.length; i > 0 && !name; i -= 1) {
+        const subpath = segments.slice(0, i).join("/");
+        name = idx.nameByPath.get(subpath);
+      }
+    }
+  }
+
+  let group: string | undefined;
+  if (id) {
+    const groupId = idx.groupIdByElementId.get(id);
+    if (groupId) group = idx.groupNameById.get(groupId);
+  }
+
+  // Fallback: Pfad-Praefix. Laengster Match gewinnt.
+  if (!group) {
+    let longest = "";
+    for (const entry of idx.groupByPathPrefix) {
+      if (
+        path === entry.prefix ||
+        path.startsWith(entry.prefix + "/")
+      ) {
+        if (entry.prefix.length > longest.length) {
+          longest = entry.prefix;
+          group = entry.name;
+        }
+      }
+    }
+  }
+
+  // Fallback: Wenn in einem Pfad-Segment eine bekannte Child-Id auftaucht,
+  // deren Gruppe wir kennen, verwenden wir diese Gruppe.
+  if (!group) {
+    const segments = path.split("/").filter(Boolean);
+    for (const seg of segments) {
+      const groupId = idx.groupIdByElementId.get(seg);
+      if (groupId) {
+        const gName = idx.groupNameById.get(groupId);
+        if (gName) {
+          group = gName;
+          break;
+        }
+      }
+    }
+  }
+
+  return { name, group };
+}
