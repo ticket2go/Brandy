@@ -16,6 +16,7 @@ import {
 
 import BrandRoles from "./BrandRoles";
 import ColorsPanel from "./ColorsPanel";
+import LogokitPanel from "./LogokitPanel";
 import TypographyPanel from "./TypographyPanel";
 import {
   CreativeCloudIcon,
@@ -732,7 +733,11 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
       <div role="tabpanel" className="min-h-[300px]">
         <TabFade tabKey={activeTab}>
           {activeTab === "logokit" && (
-            <LogokitPanel logoSrc={logoSrc} brandName={brand.name} />
+            <LogokitPanel
+              brandId={brand.id}
+              brandSlug={brand.slug}
+              brandName={brand.name}
+            />
           )}
           {activeTab === "farben" && (
             <ColorsPanel brandId={brand.id} brandName={brand.name} />
@@ -757,45 +762,6 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
         busy={exportingIdml}
       />
     </section>
-  );
-}
-
-function LogokitPanel({
-  logoSrc,
-  brandName,
-}: {
-  logoSrc: string | null;
-  brandName: string;
-}) {
-  return (
-    <div className="grid gap-6 md:grid-cols-2">
-      <div className="flex aspect-square items-center justify-center rounded-2xl border border-black/10 bg-white p-10">
-        {logoSrc ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={logoSrc}
-            alt={`${brandName} Logo`}
-            className="max-h-full max-w-full object-contain"
-          />
-        ) : (
-          <p className="text-sm text-black/40">
-            Noch kein Logo hochgeladen. Nutze „Logo hochladen“ oben rechts.
-          </p>
-        )}
-      </div>
-      <div className="flex aspect-square items-center justify-center rounded-2xl border border-black/10 bg-black p-10">
-        {logoSrc ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={logoSrc}
-            alt={`${brandName} Logo invertierter Hintergrund`}
-            className="max-h-full max-w-full object-contain invert"
-          />
-        ) : (
-          <p className="text-sm text-white/40">Vorschau auf dunklem Grund</p>
-        )}
-      </div>
-    </div>
   );
 }
 
