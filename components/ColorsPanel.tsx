@@ -16,6 +16,7 @@ import AddColorSwatch from "./AddColorSwatch";
 import ColorEditorModal, {
   type ColorEditorInitial,
   type ColorEditorSubmit,
+  type ColorRole,
   type EditorCategory,
 } from "./ColorEditorModal";
 import ColorSwatch, { type ColorSwatchData } from "./ColorSwatch";
@@ -39,6 +40,7 @@ type Color = {
   group: Group;
   name: string;
   hex: string;
+  role: ColorRole;
   position: number;
 };
 
@@ -116,7 +118,7 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
         .order("position", { ascending: true }),
       supabase
         .from("brand_colors")
-        .select("id, brand_id, group, name, hex, position")
+        .select("id, brand_id, group, name, hex, role, position")
         .eq("brand_id", brandId)
         .order("position", { ascending: true })
         .order("created_at", { ascending: true }),
@@ -277,10 +279,42 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     setEditorInitial({
       name: color.name,
       hex: color.hex,
+      role: color.role ?? null,
       categoryId: currentCatId,
       value: storedValue,
     });
     setEditorOpen(true);
+  };
+
+  const clearRoleConflicts = async (
+    group: Group,
+    role: "primary" | "secondary",
+    exceptColorId: string | null
+  ) => {
+    const conflicts = colors.filter(
+      (c) =>
+        c.group === group &&
+        c.role === role &&
+        (exceptColorId === null || c.id !== exceptColorId)
+    );
+    if (conflicts.length === 0) return;
+
+    const query = supabase
+      .from("brand_colors")
+      .update({ role: null })
+      .eq("brand_id", brandId)
+      .eq("group", group)
+      .eq("role", role);
+    const { error: clearError } =
+      exceptColorId === null
+        ? await query
+        : await query.neq("id", exceptColorId);
+    if (clearError) throw new Error(clearError.message);
+
+    const clearedIds = new Set(conflicts.map((c) => c.id));
+    setColors((prev) =>
+      prev.map((c) => (clearedIds.has(c.id) ? { ...c, role: null } : c))
+    );
   };
 
   const handleEditorSubmit = async (payload: ColorEditorSubmit) => {
@@ -291,6 +325,10 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
           .filter((c) => c.group === group)
           .reduce((max, c) => Math.max(max, c.position), -1) || 0) + 1;
 
+      if (payload.role) {
+        await clearRoleConflicts(group, payload.role, null);
+      }
+
       const { data: colorData, error: colorError } = await supabase
         .from("brand_colors")
         .insert({
@@ -298,9 +336,10 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
           group,
           name: payload.name,
           hex: payload.hex,
+          role: payload.role,
           position: nextPosition,
         })
-        .select("id, brand_id, group, name, hex, position")
+        .select("id, brand_id, group, name, hex, role, position")
         .single();
       if (colorError) throw new Error(colorError.message);
       if (!colorData) return;
@@ -332,18 +371,33 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     // edit
     if (!editorColorId) return;
 
-    // 1. Name und HEX aktualisieren, falls geaendert
+    // 1. Name, HEX und Rolle aktualisieren, falls geaendert
     const currentColor = colors.find((c) => c.id === editorColorId);
     if (
       currentColor &&
       (currentColor.name !== payload.name ||
-        currentColor.hex.toUpperCase() !== payload.hex.toUpperCase())
+        currentColor.hex.toUpperCase() !== payload.hex.toUpperCase() ||
+        (currentColor.role ?? null) !== (payload.role ?? null))
     ) {
+      if (
+        payload.role &&
+        (currentColor?.role ?? null) !== payload.role
+      ) {
+        await clearRoleConflicts(
+          currentColor?.group ?? editorGroup,
+          payload.role,
+          editorColorId
+        );
+      }
       const { data: updatedColor, error: updateColorError } = await supabase
         .from("brand_colors")
-        .update({ name: payload.name, hex: payload.hex })
+        .update({
+          name: payload.name,
+          hex: payload.hex,
+          role: payload.role,
+        })
         .eq("id", editorColorId)
-        .select("id, brand_id, group, name, hex, position")
+        .select("id, brand_id, group, name, hex, role, position")
         .single();
       if (updateColorError) throw new Error(updateColorError.message);
       if (updatedColor) {
@@ -469,7 +523,7 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     const { data: insertedColors, error: insertError } = await supabase
       .from("brand_colors")
       .insert(queued.map((q) => q.insert))
-      .select("id, brand_id, group, name, hex, position");
+      .select("id, brand_id, group, name, hex, role, position");
 
     if (insertError) throw new Error(insertError.message);
     const created = (insertedColors ?? []) as Color[];
@@ -662,6 +716,7 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
                       hex: color.hex,
                       code: value,
                       codeLabel: activeCategory.label,
+                      role: color.role ?? null,
                     } as ColorSwatchData,
                   };
                 })

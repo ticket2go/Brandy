@@ -27,9 +27,12 @@ export type EditorCategory = {
 
 type Mode = "add" | "edit";
 
+export type ColorRole = "primary" | "secondary" | null;
+
 export type ColorEditorInitial = {
   name: string;
   hex: string;
+  role: ColorRole;
   // In edit mode: the currently active category is "pinned".
   categoryId: string;
   value: string;
@@ -39,6 +42,7 @@ export type AddSubmit = {
   mode: "add";
   name: string;
   hex: string;
+  role: ColorRole;
   values: Record<string, string>;
 };
 
@@ -46,6 +50,7 @@ export type EditSubmit = {
   mode: "edit";
   name: string;
   hex: string;
+  role: ColorRole;
   categoryId: string;
   value: string;
 };
@@ -93,6 +98,7 @@ export default function ColorEditorModal({
   const [hex, setHex] = useState("#000000");
   const [rgb, setRgb] = useState<Rgb>({ r: 0, g: 0, b: 0 });
   const [cmyk, setCmyk] = useState<Cmyk>({ c: 0, m: 0, y: 0, k: 100 });
+  const [role, setRole] = useState<ColorRole>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [activeCategoryId, setActiveCategoryId] = useState<string>("");
   const [saving, setSaving] = useState(false);
@@ -112,6 +118,7 @@ export default function ColorEditorModal({
       setHex(base);
       setRgb(hexToRgb(base) ?? { r: 0, g: 0, b: 0 });
       setCmyk(hexToCmyk(base) ?? { c: 0, m: 0, y: 0, k: 100 });
+      setRole(initial.role ?? null);
       const initValues = emptyValues(categories);
       initValues[initial.categoryId] = initial.value ?? "";
       setValues(initValues);
@@ -121,6 +128,7 @@ export default function ColorEditorModal({
       setHex("#000000");
       setRgb({ r: 0, g: 0, b: 0 });
       setCmyk({ c: 0, m: 0, y: 0, k: 100 });
+      setRole(null);
       setValues(emptyValues(categories));
       setActiveCategoryId(categories[0]?.id ?? "");
     }
@@ -265,6 +273,7 @@ export default function ColorEditorModal({
           mode: "add",
           name: trimmedName,
           hex: normalizedHex,
+          role,
           values: cleaned,
         });
       } else {
@@ -290,6 +299,7 @@ export default function ColorEditorModal({
           mode: "edit",
           name: trimmedName,
           hex: normalizedHex,
+          role,
           categoryId: activeCategoryId,
           value,
         });
@@ -391,6 +401,46 @@ export default function ColorEditorModal({
             />
           </div>
         </label>
+
+        <div className="flex flex-col gap-1 text-sm text-black/70">
+          <span>Rolle</span>
+          <div
+            role="radiogroup"
+            aria-label="Rolle der Farbe"
+            className="inline-flex w-fit items-center gap-1 rounded-full border border-black/15 bg-white p-1"
+          >
+            {(
+              [
+                { value: null, label: "Keine" },
+                { value: "primary", label: "Primary" },
+                { value: "secondary", label: "Secondary" },
+              ] as const
+            ).map((opt) => {
+              const active = role === opt.value;
+              return (
+                <button
+                  key={String(opt.value)}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setRole(opt.value)}
+                  disabled={saving || deleting}
+                  className={`rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-widest transition ${
+                    active
+                      ? "bg-black text-white"
+                      : "text-black/60 hover:text-black"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          <span className="text-[11px] text-black/40">
+            Wird spaeter fuer Web/CSS-Exports als <code>--color-primary</code> /{" "}
+            <code>--color-secondary</code> verwendet.
+          </span>
+        </div>
 
         {mode === "edit" && categories.length > 1 && (
           <label className="flex flex-col gap-1 text-sm text-black/70">
