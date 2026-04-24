@@ -29,10 +29,10 @@ export default function BrandCard({
   const logoSrc = resolveLogoSrc(logoUrl);
   const swatches = (colors ?? []).slice(0, 3);
 
-  // Dezenter Verlauf aus den Brand-Farben, der aus der unteren rechten Ecke
-  // nach oben links ausklingt. Drei radiale Layer leicht versetzt, damit die
-  // Farben ineinander uebergehen. Jede Farbe wird nur mit geringer Alpha
-  // eingesetzt (~28 %), damit die Karte insgesamt schwarz bleibt.
+  // Verlauf aus den Brand-Farben, der aus der unteren rechten Ecke nach oben
+  // links ausklingt. Drei radiale Layer leicht versetzt, damit die Farben
+  // ineinander uebergehen. Der Verlauf ist standardmaessig unsichtbar und
+  // wird erst beim Hover eingeblendet, damit die Karte ansonsten schwarz bleibt.
   const glowLayers: string[] = [];
   if (swatches.length > 0) {
     const offsets = [
@@ -61,7 +61,7 @@ export default function BrandCard({
       {glowBackground && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-0"
+          className="pointer-events-none absolute inset-0 z-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
           style={{ backgroundImage: glowBackground }}
         />
       )}
