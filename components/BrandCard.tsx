@@ -19,17 +19,6 @@ function resolveLogoSrc(logoUrl: string | null | undefined): string | null {
   return data.publicUrl;
 }
 
-function hexLuminance(hex: string): number {
-  const cleaned = hex.replace("#", "");
-  if (cleaned.length !== 6) return 0;
-  const r = parseInt(cleaned.slice(0, 2), 16) / 255;
-  const g = parseInt(cleaned.slice(2, 4), 16) / 255;
-  const b = parseInt(cleaned.slice(4, 6), 16) / 255;
-  const toLin = (c: number) =>
-    c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  return 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
-}
-
 export default function BrandCard({
   name,
   slug,
@@ -40,27 +29,20 @@ export default function BrandCard({
   const logoSrc = resolveLogoSrc(logoUrl);
   const swatches = (colors ?? []).slice(0, 3);
 
-  // Verlauf aus den ersten zwei Farben der Brand; wenn nur eine existiert,
-  // erzeugen wir einen weichen Verlauf auf dunkles Ende, sonst Schwarz.
-  const gradientStart = colors?.[0] ?? "#000000";
-  const gradientEnd =
-    colors?.[1] ?? (colors?.[0] ? "#111111" : "#000000");
-  const hasBrandGradient = (colors?.length ?? 0) > 0;
+  // Verlauf startet immer in Schwarz und geht in eine Brand-Farbe. Fallback
+  // auf Schwarz, wenn keine Brand-Farben verfuegbar sind.
+  const gradientStart = "#000000";
+  const gradientEnd = colors?.[0] ?? "#000000";
 
-  // Durchschnitts-Luminanz bestimmt, ob Text hell oder dunkel ist.
-  const avgLum = hasBrandGradient
-    ? (hexLuminance(gradientStart) + hexLuminance(gradientEnd)) / 2
-    : 0;
-  const light = avgLum > 0.55;
-  const textMain = light ? "text-black" : "text-white";
-  const textMuted = light ? "text-black/50" : "text-white/50";
-  const ringClass = light ? "ring-black/15" : "ring-white/20";
-  const deleteBtnClass = light
-    ? "bg-black/5 text-black/50 hover:bg-red-500/20 hover:text-red-600 focus:ring-black/20"
-    : "bg-white/10 text-white/60 hover:bg-red-500/20 hover:text-red-300 focus:ring-white/20";
-  const focusRingClass = light
-    ? "focus-visible:ring-black/40"
-    : "focus-visible:ring-white/40";
+  // Texte und Akzente bleiben auf dunklem Grund hell. Der Verlauf startet in
+  // Schwarz, also liegt der Titel (links oben bis links unten) ueber dem
+  // dunklen Ende und bleibt zuverlaessig lesbar.
+  const textMain = "text-white";
+  const textMuted = "text-white/50";
+  const ringClass = "ring-white/20";
+  const deleteBtnClass =
+    "bg-white/10 text-white/60 hover:bg-red-500/20 hover:text-red-300 focus:ring-white/20";
+  const focusRingClass = "focus-visible:ring-white/40";
 
   return (
     <article
