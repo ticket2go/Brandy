@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase/client";
 import {
   formatCmyk,
   formatRgb as formatRgbFromLib,
+  hexToCmyk,
   hexToRgb,
 } from "@/lib/color";
 
@@ -66,6 +67,10 @@ function defaultValueFor(category: Category, color: Color): string {
   const key = category.key.toLowerCase();
   if (key === "hex") return color.hex.toUpperCase();
   if (key === "rgb") return formatRgb(color.hex);
+  if (key === "cmyk") {
+    const cmyk = hexToCmyk(color.hex);
+    return cmyk ? formatCmyk(cmyk) : color.hex.toUpperCase();
+  }
   return color.hex.toUpperCase();
 }
 
