@@ -14,7 +14,7 @@ import {
 
 import BrandRoles from "./BrandRoles";
 import ColorsPanel from "./ColorsPanel";
-import { FigmaIcon, IndesignIcon } from "./ExportIcons";
+import { CreativeCloudIcon, FigmaIcon, IndesignIcon } from "./ExportIcons";
 import IdmlExportModal from "./IdmlExportModal";
 
 type Brand = {
@@ -491,6 +491,14 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
             className="flex h-6 w-6 items-center justify-center rounded-md transition hover:scale-110 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30"
           >
             <FigmaIcon className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            aria-label="Export in Adobe Creative Cloud"
+            title="Export in Adobe Creative Cloud"
+            className="flex h-6 w-6 items-center justify-center rounded-md transition hover:scale-110 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30"
+          >
+            <CreativeCloudIcon className="h-5 w-5" />
           </button>
         </div>
       </div>
