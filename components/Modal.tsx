@@ -57,7 +57,7 @@ export default function Modal({
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-[70] flex items-center justify-center px-4 transition-all duration-300 ease-out"
+      className="fixed inset-0 z-[70] flex items-center justify-center overflow-y-auto px-4 py-8 transition-all duration-300 ease-out"
       style={{
         backgroundColor: visible ? "rgba(0,0,0,0.4)" : "rgba(0,0,0,0)",
         backdropFilter: visible ? "blur(18px)" : "blur(0px)",
@@ -68,7 +68,7 @@ export default function Modal({
     >
       <div
         ref={panelRef}
-        className={`w-full ${widthClassName} rounded-2xl bg-white p-6 transition-all duration-300 ease-out`}
+        className={`my-auto max-h-[calc(100vh-4rem)] w-full ${widthClassName} overflow-y-auto rounded-2xl bg-white p-6 transition-all duration-300 ease-out`}
         style={{
           opacity: visible ? 1 : 0,
           transform: visible ? "translateY(0) scale(1)" : "translateY(8px) scale(0.98)",
