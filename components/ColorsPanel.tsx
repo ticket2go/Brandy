@@ -266,7 +266,7 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
   };
 
   const handleEditorSubmit = async (payload: ColorEditorSubmit) => {
-    if (editorMode === "add") {
+    if (payload.mode === "add") {
       const group = editorGroup;
       const nextPosition =
         (colors
@@ -288,24 +288,56 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
       if (!colorData) return;
       const createdColor = colorData as Color;
 
-      const { data: valueData, error: valueError } = await supabase
-        .from("brand_color_values")
-        .insert({
+      const valueRows = Object.entries(payload.values)
+        .filter(([, val]) => val.trim().length > 0)
+        .map(([categoryId, val]) => ({
           color_id: createdColor.id,
-          category_id: payload.categoryId,
-          value: payload.value,
-        })
-        .select("id, color_id, category_id, value")
-        .single();
-      if (valueError) throw new Error(valueError.message);
+          category_id: categoryId,
+          value: val.trim(),
+        }));
+
+      let insertedValues: ColorValue[] = [];
+      if (valueRows.length > 0) {
+        const { data: valueData, error: valueError } = await supabase
+          .from("brand_color_values")
+          .insert(valueRows)
+          .select("id, color_id, category_id, value");
+        if (valueError) throw new Error(valueError.message);
+        insertedValues = (valueData ?? []) as ColorValue[];
+      }
 
       setColors((prev) => [...prev, createdColor]);
-      if (valueData) setValues((prev) => [...prev, valueData as ColorValue]);
+      setValues((prev) => [...prev, ...insertedValues]);
       return;
     }
 
     // edit
     if (!editorColorId) return;
+
+    // 1. Name und HEX aktualisieren, falls geaendert
+    const currentColor = colors.find((c) => c.id === editorColorId);
+    if (
+      currentColor &&
+      (currentColor.name !== payload.name ||
+        currentColor.hex.toUpperCase() !== payload.hex.toUpperCase())
+    ) {
+      const { data: updatedColor, error: updateColorError } = await supabase
+        .from("brand_colors")
+        .update({ name: payload.name, hex: payload.hex })
+        .eq("id", editorColorId)
+        .select("id, brand_id, group, name, hex, position")
+        .single();
+      if (updateColorError) throw new Error(updateColorError.message);
+      if (updatedColor) {
+        setColors((prev) =>
+          prev.map((c) =>
+            c.id === updatedColor.id ? (updatedColor as Color) : c
+          )
+        );
+      }
+    }
+
+    // 2. Wert der aktiven Kategorie upserten
     const existingValue = values.find(
       (v) =>
         v.color_id === editorColorId && v.category_id === payload.categoryId
@@ -337,25 +369,19 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
       if (insertError) throw new Error(insertError.message);
       if (inserted) setValues((prev) => [...prev, inserted as ColorValue]);
     }
+  };
 
-    // Update base hex if changed
-    const currentColor = colors.find((c) => c.id === editorColorId);
-    if (currentColor && currentColor.hex.toUpperCase() !== payload.hex.toUpperCase()) {
-      const { data: updatedColor, error: updateHexError } = await supabase
-        .from("brand_colors")
-        .update({ hex: payload.hex })
-        .eq("id", editorColorId)
-        .select("id, brand_id, group, name, hex, position")
-        .single();
-      if (updateHexError) throw new Error(updateHexError.message);
-      if (updatedColor) {
-        setColors((prev) =>
-          prev.map((c) =>
-            c.id === updatedColor.id ? (updatedColor as Color) : c
-          )
-        );
-      }
-    }
+  const handleDeleteColor = async () => {
+    if (!editorColorId) return;
+    const { error: deleteError } = await supabase
+      .from("brand_colors")
+      .delete()
+      .eq("id", editorColorId);
+    if (deleteError) throw new Error(deleteError.message);
+    const deletedId = editorColorId;
+    setColors((prev) => prev.filter((c) => c.id !== deletedId));
+    setValues((prev) => prev.filter((v) => v.color_id !== deletedId));
+    setEditorColorId(null);
   };
 
   const editorCategories: EditorCategory[] = useMemo(() => {
@@ -549,6 +575,7 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
         initial={editorInitial}
         onClose={() => setEditorOpen(false)}
         onSubmit={handleEditorSubmit}
+        onDelete={editorMode === "edit" ? handleDeleteColor : undefined}
       />
 
       <ConfirmDialog
