@@ -307,25 +307,85 @@ function findNearestName(ancestry: UnknownObject[]): string {
   return "";
 }
 
+function nodeGroupName(node: UnknownObject): string | undefined {
+  const type = typeof node.type === "string" ? node.type.toLowerCase() : "";
+  const name = typeof node.name === "string" ? node.name.trim() : "";
+  if (!name) return undefined;
+  if (
+    /vnd\.adobe\.element\.group/.test(type) ||
+    /vnd\.adobe\.element\.colortheme/.test(type) ||
+    /colortheme/.test(type) ||
+    // Strukturelle Hinweise: Theme-Knoten haben meist `swatches` / `colortheme`,
+    // Gruppen-Knoten haben `children` mit mehreren Color-Elementen.
+    isObject(node.colortheme) ||
+    Array.isArray((node as UnknownObject).swatches)
+  ) {
+    return name;
+  }
+  return undefined;
+}
+
+function isThemeNode(node: UnknownObject): boolean {
+  const type = typeof node.type === "string" ? node.type.toLowerCase() : "";
+  return (
+    /colortheme/.test(type) ||
+    isObject(node.colortheme) ||
+    Array.isArray(node.swatches)
+  );
+}
+
+type WalkContext = {
+  group?: string;
+  themeCounter?: { value: number };
+  insideTheme: boolean;
+};
+
 function walkJson(
   node: unknown,
   ancestry: UnknownObject[],
+  ctx: WalkContext,
   collect: (color: CclibsColor) => void
 ): void {
   if (Array.isArray(node)) {
-    for (const entry of node) walkJson(entry, ancestry, collect);
+    for (const entry of node) walkJson(entry, ancestry, ctx, collect);
     return;
   }
   if (!isObject(node)) return;
 
   const nextAncestry = [...ancestry, node];
+  const discoveredGroup = nodeGroupName(node);
+  const nextGroup = discoveredGroup ?? ctx.group;
+  const nextInsideTheme = ctx.insideTheme || isThemeNode(node);
+  // Theme-Swatches bekommen eine eigene Nummerierung, weil sie selten eigene
+  // Namen haben. Wir initialisieren den Counter beim ersten Theme-Ancestor.
+  const nextCounter =
+    !ctx.insideTheme && nextInsideTheme
+      ? { value: 0 }
+      : ctx.themeCounter;
+  const nextCtx: WalkContext = {
+    group: nextGroup,
+    themeCounter: nextCounter,
+    insideTheme: nextInsideTheme,
+  };
 
   const rep = parseRepresentation(node);
   if (rep) {
     const spotName = rep.spot?.name;
-    const name = spotName && spotName.trim()
-      ? spotName.trim()
-      : findNearestName(nextAncestry) || "Farbe";
+    let name = spotName && spotName.trim() ? spotName.trim() : "";
+    if (!name) {
+      const nearest = findNearestName(nextAncestry);
+      const isOwnName =
+        typeof node.name === "string" && node.name.trim() === nearest;
+      if (isOwnName) {
+        name = nearest;
+      } else if (ctx.insideTheme && nextGroup && nearest === nextGroup) {
+        // Nur der Theme-Name haengt am Eintrag -> durchnummerieren
+        ctx.themeCounter!.value += 1;
+        name = `${nextGroup} ${ctx.themeCounter!.value}`;
+      } else {
+        name = nearest || "Farbe";
+      }
+    }
     collect({
       name,
       hex: rgbToHex(rep.rgb),
@@ -334,30 +394,29 @@ function walkJson(
       lab: rep.lab,
       spot: rep.spot,
       mode: rep.mode,
+      group: ctx.group,
     });
-    // Kein early return: es kann geschachtelte Reps geben (z.B. spot.alternate),
-    // aber die sind bereits von parseRepresentation konsumiert. Wir ueberspringen
-    // darum Representations-Arrays innerhalb dieses Knotens.
     if (Array.isArray(node.representations)) {
       for (const sibling of node.representations) {
         if (sibling === node) continue;
-        walkJson(sibling, nextAncestry, collect);
+        walkJson(sibling, nextAncestry, nextCtx, collect);
       }
     }
     return;
   }
 
   for (const value of Object.values(node)) {
-    walkJson(value, nextAncestry, collect);
+    walkJson(value, nextAncestry, nextCtx, collect);
   }
 }
 
 function colorKey(color: CclibsColor): string {
   const base = color.hex.toUpperCase();
-  if (color.spot) return `spot:${color.spot.name}|${base}`;
+  const g = color.group ?? "";
+  if (color.spot) return `${g}|spot:${color.spot.name}|${base}`;
   if (color.cmyk)
-    return `cmyk:${color.cmyk.c}-${color.cmyk.m}-${color.cmyk.y}-${color.cmyk.k}`;
-  return `rgb:${base}`;
+    return `${g}|cmyk:${color.cmyk.c}-${color.cmyk.m}-${color.cmyk.y}-${color.cmyk.k}`;
+  return `${g}|rgb:${base}`;
 }
 
 // CC-Library-Exports sind DCX/UCF-Container. Representations werden oft als
@@ -454,22 +513,27 @@ export async function parseCclibsFile(file: File): Promise<CclibsColor[]> {
   // dem Element-Manifest verwenden, das auf diese Datei zeigt.
   for (const { path, data } of parsedFiles) {
     const context = resolveContextForPath(path, elementIndex);
-    walkJson(data, [], (color) => {
-      const key = colorKey(color);
-      if (seen.has(key)) return;
-      seen.add(key);
-      const useFallback =
-        (!color.name ||
-          color.name === "Farbe" ||
-          color.name.startsWith("Farbe")) &&
-        context.name;
-      const finalColor: CclibsColor = {
-        ...color,
-        name: useFallback ? context.name! : color.name,
-        group: context.group ?? color.group,
-      };
-      colors.push(finalColor);
-    });
+    walkJson(
+      data,
+      [],
+      { group: context.group, insideTheme: false },
+      (color) => {
+        const useFallbackName =
+          (!color.name ||
+            color.name === "Farbe" ||
+            color.name.startsWith("Farbe")) &&
+          context.name;
+        const finalColor: CclibsColor = {
+          ...color,
+          name: useFallbackName ? context.name! : color.name,
+          group: color.group ?? context.group,
+        };
+        const key = colorKey(finalColor);
+        if (seen.has(key)) return;
+        seen.add(key);
+        colors.push(finalColor);
+      }
+    );
   }
 
   if (colors.length === 0) {
