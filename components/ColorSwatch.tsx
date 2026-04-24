@@ -15,6 +15,16 @@ type ColorSwatchProps = ColorSwatchData & {
   onEdit?: () => void;
 };
 
+function isDarkColor(hex: string): boolean {
+  const normalized = hex.replace("#", "");
+  if (normalized.length !== 6) return false;
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance < 0.6;
+}
+
 export default function ColorSwatch({
   name,
   hex,
@@ -24,6 +34,7 @@ export default function ColorSwatch({
   onEdit,
 }: ColorSwatchProps) {
   const [copied, setCopied] = useState(false);
+  const dark = isDarkColor(hex);
 
   const handleCopy = async (event: React.MouseEvent) => {
     event.preventDefault();
@@ -58,10 +69,11 @@ export default function ColorSwatch({
             onEdit?.();
           }}
           aria-label={`Farbe ${name} bearbeiten`}
-          className="absolute left-2 top-2 rounded-sm px-1 text-[10px] font-medium uppercase tracking-widest text-white/90 opacity-0 transition-opacity duration-200 hover:text-white focus:opacity-100 focus:outline-none group-hover:opacity-100"
-          style={{ textShadow: "0 1px 2px rgba(0,0,0,0.35)" }}
+          className={`absolute left-3 top-2 flex h-8 items-center rounded-sm text-[11px] font-medium normal-case opacity-0 transition-opacity duration-200 focus:opacity-100 focus:outline-none group-hover:opacity-100 ${
+            dark ? "text-white" : "text-black"
+          }`}
         >
-          Bearbeiten
+          bearbeiten
         </button>
 
         <button
