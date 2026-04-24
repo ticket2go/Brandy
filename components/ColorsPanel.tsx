@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { supabase } from "@/lib/supabase/client";
 
+import { formatRgb as formatRgbFromLib, hexToRgb } from "@/lib/color";
+
 import AddCategoryDialog from "./AddCategoryDialog";
 import AddColorSwatch from "./AddColorSwatch";
 import ColorEditorModal, {
@@ -13,6 +15,9 @@ import ColorEditorModal, {
 } from "./ColorEditorModal";
 import ColorSwatch, { type ColorSwatchData } from "./ColorSwatch";
 import ConfirmDialog from "./ConfirmDialog";
+import ImportColorsFromUrlModal, {
+  type ImportColorItem,
+} from "./ImportColorsFromUrlModal";
 
 type Group = "print" | "digital";
 
@@ -75,6 +80,8 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
   const [addCategoryGroup, setAddCategoryGroup] = useState<Group | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
   const [deletingCategory, setDeletingCategory] = useState(false);
+
+  const [importOpen, setImportOpen] = useState(false);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<"add" | "edit">("add");
@@ -384,6 +391,88 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     setEditorColorId(null);
   };
 
+  const handleImportFromUrl = async (items: ImportColorItem[]) => {
+    if (items.length === 0) return;
+    const group: Group = "digital";
+
+    const digitalCategories = categories.filter((c) => c.group === group);
+    const hexCategory = digitalCategories.find(
+      (c) => c.key.toLowerCase() === "hex"
+    );
+    const rgbCategory = digitalCategories.find(
+      (c) => c.key.toLowerCase() === "rgb"
+    );
+
+    const basePosition =
+      colors
+        .filter((c) => c.group === group)
+        .reduce((max, c) => Math.max(max, c.position), -1) + 1;
+
+    const existingHexes = new Set(
+      colors
+        .filter((c) => c.group === group)
+        .map((c) => c.hex.toUpperCase())
+    );
+    const deduped = items.filter(
+      (item) => !existingHexes.has(item.hex.toUpperCase())
+    );
+    if (deduped.length === 0) return;
+
+    const insertRows = deduped.map((item, idx) => ({
+      brand_id: brandId,
+      group,
+      name: item.name,
+      hex: item.hex.toUpperCase(),
+      position: basePosition + idx,
+    }));
+
+    const { data: insertedColors, error: insertError } = await supabase
+      .from("brand_colors")
+      .insert(insertRows)
+      .select("id, brand_id, group, name, hex, position");
+
+    if (insertError) throw new Error(insertError.message);
+    const created = (insertedColors ?? []) as Color[];
+
+    const valueRows: Array<{
+      color_id: string;
+      category_id: string;
+      value: string;
+    }> = [];
+    for (const row of created) {
+      if (hexCategory) {
+        valueRows.push({
+          color_id: row.id,
+          category_id: hexCategory.id,
+          value: row.hex.toUpperCase(),
+        });
+      }
+      if (rgbCategory) {
+        const rgb = hexToRgb(row.hex);
+        if (rgb) {
+          valueRows.push({
+            color_id: row.id,
+            category_id: rgbCategory.id,
+            value: formatRgbFromLib(rgb),
+          });
+        }
+      }
+    }
+
+    let insertedValues: ColorValue[] = [];
+    if (valueRows.length > 0) {
+      const { data: valueData, error: valueError } = await supabase
+        .from("brand_color_values")
+        .insert(valueRows)
+        .select("id, color_id, category_id, value");
+      if (valueError) throw new Error(valueError.message);
+      insertedValues = (valueData ?? []) as ColorValue[];
+    }
+
+    setColors((prev) => [...prev, ...created]);
+    setValues((prev) => [...prev, ...insertedValues]);
+  };
+
   const editorCategories: EditorCategory[] = useMemo(() => {
     return categories
       .filter((c) => c.group === editorGroup)
@@ -560,6 +649,46 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
                 {!loading && (
                   <AddColorSwatch onAdd={() => openAddColor(group)} />
                 )}
+                {!loading && group === "digital" && (
+                  <button
+                    type="button"
+                    onClick={() => setImportOpen(true)}
+                    aria-label="Farben aus Website importieren"
+                    title="Farben aus Website importieren"
+                    className="group relative flex w-44 shrink-0 flex-col overflow-hidden rounded-2xl border border-dashed border-black/15 bg-black/[0.02] text-black/40 shadow-none ring-0 transition-all duration-300 hover:-translate-y-1 hover:border-black/30 hover:bg-black/[0.04] hover:text-black/70 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30"
+                  >
+                    <div className="flex h-36 w-full items-center justify-center bg-black/[0.04]">
+                      <span
+                        aria-hidden
+                        className="flex h-10 w-10 items-center justify-center rounded-full border border-current text-current transition-transform duration-300 group-hover:scale-105"
+                      >
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M8.5 11.5l3-3M7 13a3 3 0 010-4.2l2-2a3 3 0 014.2 4.2l-1 1M13 7a3 3 0 010 4.2l-2 2a3 3 0 01-4.2-4.2l1-1"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-1 px-3 py-3 text-left">
+                      <h4 className="text-sm font-bold uppercase tracking-tight text-black/40 group-hover:text-black/70">
+                        Aus URL
+                      </h4>
+                      <p className="text-[10px] font-medium uppercase tracking-widest text-black/30">
+                        Website importieren
+                      </p>
+                    </div>
+                  </button>
+                )}
                 {loading && (
                   <p className="text-sm text-black/50">Lade Farben …</p>
                 )}
@@ -574,6 +703,12 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
         group={addCategoryGroup ?? "print"}
         onClose={() => setAddCategoryGroup(null)}
         onSubmit={handleAddCategory}
+      />
+
+      <ImportColorsFromUrlModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImport={handleImportFromUrl}
       />
 
       <ColorEditorModal
