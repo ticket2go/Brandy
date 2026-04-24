@@ -7,25 +7,25 @@ type TitleProps = {
 };
 
 export default function Title({ text }: TitleProps) {
-  const containerRef = useRef<HTMLHeadingElement | null>(null);
+  const ref = useRef<HTMLHeadingElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
       const gsap = (await import("gsap")).default;
-      if (cancelled || !containerRef.current) return;
+      if (cancelled || !ref.current) return;
 
-      gsap.from(containerRef.current.querySelectorAll(".letter"), {
-        duration: 1.2,
-        opacity: 0,
-        y: 80,
-        scale: 0.8,
-        filter: "blur(12px)",
-        ease: "power3.out",
-        stagger: 0.06,
-        delay: 0.2,
-      });
+      gsap.fromTo(
+        ref.current,
+        { opacity: 0, filter: "blur(12px)" },
+        {
+          opacity: 1,
+          filter: "blur(0px)",
+          duration: 0.9,
+          ease: "power2.out",
+        }
+      );
     };
 
     run();
@@ -37,23 +37,16 @@ export default function Title({ text }: TitleProps) {
 
   return (
     <h1
-      ref={containerRef}
-      aria-label={text}
-      className="m-0 flex whitespace-nowrap font-bold text-black"
+      ref={ref}
+      className="m-0 font-bold tracking-tight text-black"
       style={{
         fontSize: "clamp(1.5rem, 5vw, 3.5rem)",
         letterSpacing: "-0.02em",
+        opacity: 0,
+        filter: "blur(12px)",
       }}
     >
-      {text.split("").map((char, index) => (
-        <span
-          key={`${char}-${index}`}
-          className="letter inline-block will-change-transform"
-          style={{ transformOrigin: "50% 100%" }}
-        >
-          {char === " " ? "\u00A0" : char}
-        </span>
-      ))}
+      {text}
     </h1>
   );
 }
