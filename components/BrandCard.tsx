@@ -29,29 +29,14 @@ export default function BrandCard({
   const logoSrc = resolveLogoSrc(logoUrl);
   const swatches = (colors ?? []).slice(0, 3);
 
-  // Verlauf startet immer in Schwarz und geht in eine Brand-Farbe. Fallback
-  // auf Schwarz, wenn keine Brand-Farben verfuegbar sind.
-  const gradientStart = "#000000";
-  const gradientEnd = colors?.[0] ?? "#000000";
-
-  // Texte und Akzente bleiben auf dunklem Grund hell. Der Verlauf startet in
-  // Schwarz, also liegt der Titel (links oben bis links unten) ueber dem
-  // dunklen Ende und bleibt zuverlaessig lesbar.
   const textMain = "text-white";
   const textMuted = "text-white/50";
-  const ringClass = "ring-white/20";
   const deleteBtnClass =
     "bg-white/10 text-white/60 hover:bg-red-500/20 hover:text-red-300 focus:ring-white/20";
   const focusRingClass = "focus-visible:ring-white/40";
 
   return (
-    <article
-      className="group relative flex h-40 w-64 shrink-0 flex-col justify-between overflow-hidden rounded-2xl p-5 transition-transform hover:-translate-y-0.5"
-      style={{
-        backgroundImage: `linear-gradient(135deg, ${gradientStart} 0%, ${gradientEnd} 100%)`,
-        backgroundColor: gradientStart,
-      }}
-    >
+    <article className="group relative flex h-40 w-64 shrink-0 flex-col justify-between overflow-hidden rounded-2xl bg-black p-5 transition-transform hover:-translate-y-0.5">
       <Link
         href={`/brands/${slug}`}
         aria-label={`Brand "${name}" öffnen`}
@@ -115,13 +100,16 @@ export default function BrandCard({
         {swatches.length > 0 && (
           <div
             aria-label="Brand-Farben"
-            className="flex shrink-0 items-center gap-1"
+            className="flex shrink-0 items-center gap-1.5"
           >
             {swatches.map((hex, idx) => (
               <span
                 key={`${hex}-${idx}`}
-                className={`h-3 w-3 rounded-full ring-1 ${ringClass}`}
-                style={{ backgroundColor: hex }}
+                className="h-3 w-3 rounded-full"
+                style={{
+                  backgroundColor: hex,
+                  boxShadow: `0 0 8px ${hex}66`,
+                }}
                 title={hex}
               />
             ))}
