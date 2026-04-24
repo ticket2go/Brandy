@@ -18,8 +18,30 @@ type BrandFont = {
   source: "google" | "custom";
   license_confirmed: boolean;
   google_category: string | null;
+  roles: string[];
   position: number;
 };
+
+type FontRole = {
+  key: string;
+  label: string;
+  previewSize: string;
+  previewWeight: number;
+};
+
+const FONT_ROLES: FontRole[] = [
+  { key: "headline", label: "Headline", previewSize: "2.75rem", previewWeight: 700 },
+  { key: "subline", label: "Subline", previewSize: "1.75rem", previewWeight: 600 },
+  { key: "overline", label: "Overline", previewSize: "0.75rem", previewWeight: 600 },
+  { key: "copy", label: "Copy", previewSize: "1rem", previewWeight: 400 },
+  { key: "caption", label: "Caption", previewSize: "0.75rem", previewWeight: 400 },
+  { key: "quote", label: "Quote", previewSize: "1.25rem", previewWeight: 400 },
+  { key: "monospace", label: "Monospace", previewSize: "0.9rem", previewWeight: 400 },
+];
+
+const ROLE_LABEL_BY_KEY: Record<string, string> = Object.fromEntries(
+  FONT_ROLES.map((r) => [r.key, r.label])
+);
 
 type BrandFontFile = {
   id: string;
@@ -92,7 +114,7 @@ export default function TypographyPanel({
       supabase
         .from("brand_fonts")
         .select(
-          "id, brand_id, family, source, license_confirmed, google_category, position"
+          "id, brand_id, family, source, license_confirmed, google_category, roles, position"
         )
         .eq("brand_id", brandId)
         .order("position", { ascending: true })
@@ -109,7 +131,10 @@ export default function TypographyPanel({
     } else if (filesRes.error) {
       setError(filesRes.error.message);
     } else {
-      const fontRows = (fontsRes.data ?? []) as BrandFont[];
+      const fontRows = ((fontsRes.data ?? []) as BrandFont[]).map((f) => ({
+        ...f,
+        roles: Array.isArray(f.roles) ? f.roles : [],
+      }));
       const fontIds = new Set(fontRows.map((f) => f.id));
       setFonts(fontRows);
       setFiles(
@@ -196,10 +221,11 @@ export default function TypographyPanel({
         license_confirmed: payload.licenseConfirmed,
         google_category:
           payload.source === "google" ? payload.category ?? null : null,
+        roles: [],
         position: nextPosition,
       })
       .select(
-        "id, brand_id, family, source, license_confirmed, google_category, position"
+        "id, brand_id, family, source, license_confirmed, google_category, roles, position"
       )
       .single();
     if (fontError) throw new Error(fontError.message);
@@ -296,6 +322,31 @@ export default function TypographyPanel({
 
     setFonts((prev) => [...prev, newFont]);
     setFiles((prev) => [...prev, ...uploadedFiles]);
+  };
+
+  const toggleFontRole = async (font: BrandFont, roleKey: string) => {
+    const hasRole = font.roles.includes(roleKey);
+    const nextRoles = hasRole
+      ? font.roles.filter((r) => r !== roleKey)
+      : [...font.roles, roleKey];
+    // Reihenfolge nach FONT_ROLES beibehalten, damit die Chips stabil wirken.
+    const order = FONT_ROLES.map((r) => r.key);
+    nextRoles.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+
+    setFonts((prev) =>
+      prev.map((f) => (f.id === font.id ? { ...f, roles: nextRoles } : f))
+    );
+
+    const { error: updateError } = await supabase
+      .from("brand_fonts")
+      .update({ roles: nextRoles })
+      .eq("id", font.id);
+    if (updateError) {
+      setError(updateError.message);
+      setFonts((prev) =>
+        prev.map((f) => (f.id === font.id ? { ...f, roles: font.roles } : f))
+      );
+    }
   };
 
   const triggerDownload = (blob: Blob, filename: string) => {
@@ -766,11 +817,27 @@ export default function TypographyPanel({
                           {fontFiles.length === 1 ? "Datei" : "Dateien"}
                         </span>
                       </div>
-                      {font.google_category && (
-                        <p className="text-[11px] uppercase tracking-widest text-black/40">
-                          {font.google_category}
-                        </p>
-                      )}
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {font.google_category && (
+                          <span className="text-[11px] uppercase tracking-widest text-black/40">
+                            {font.google_category}
+                          </span>
+                        )}
+                        {font.roles.length > 0 ? (
+                          font.roles.map((roleKey) => (
+                            <span
+                              key={`${font.id}-role-chip-${roleKey}`}
+                              className="rounded-full bg-black px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-white"
+                            >
+                              {ROLE_LABEL_BY_KEY[roleKey] ?? roleKey}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[11px] italic text-black/40">
+                            Keine Verwendung zugewiesen
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -913,6 +980,68 @@ export default function TypographyPanel({
                 </div>
 
                 <div className="flex flex-col gap-4">
+                  <h5 className="text-xs font-semibold uppercase tracking-widest text-black/50">
+                    Verwendung
+                  </h5>
+                  <div className="flex flex-wrap gap-2">
+                    {FONT_ROLES.map((role) => {
+                      const active = font.roles.includes(role.key);
+                      return (
+                        <button
+                          key={`${font.id}-role-${role.key}`}
+                          type="button"
+                          onClick={() => toggleFontRole(font, role.key)}
+                          aria-pressed={active}
+                          className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                            active
+                              ? "border-black bg-black text-white"
+                              : "border-black/15 bg-white text-black/70 hover:bg-black/5"
+                          }`}
+                        >
+                          {role.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {font.roles.length > 0 && fontFiles.length > 0 && (
+                    <div className="flex flex-col gap-3 rounded-xl border border-black/5 bg-black/[0.015] p-4">
+                      {FONT_ROLES.filter((role) =>
+                        font.roles.includes(role.key)
+                      ).map((role) => (
+                        <div
+                          key={`${font.id}-role-preview-${role.key}`}
+                          className="flex items-baseline justify-between gap-4"
+                        >
+                          <span className="flex-none text-[10px] font-semibold uppercase tracking-widest text-black/40">
+                            {role.label}
+                          </span>
+                          <span
+                            className="min-w-0 truncate text-black"
+                            style={{
+                              fontFamily: `'${cssFamily}', sans-serif`,
+                              fontSize: role.previewSize,
+                              fontWeight: role.previewWeight,
+                              lineHeight: 1.2,
+                              letterSpacing:
+                                role.key === "overline" ? "0.15em" : undefined,
+                              textTransform:
+                                role.key === "overline" ? "uppercase" : undefined,
+                              fontStyle:
+                                role.key === "quote" ? "italic" : undefined,
+                            }}
+                          >
+                            {role.key === "monospace"
+                              ? "const hello = 'world';"
+                              : role.key === "overline"
+                                ? font.family
+                                : `${font.family} – ${role.label}`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <h5 className="text-xs font-semibold uppercase tracking-widest text-black/50">
                     Hinterlegte Dateien
                   </h5>

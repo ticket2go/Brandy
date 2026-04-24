@@ -185,6 +185,7 @@ export interface Database {
           source: "google" | "custom";
           license_confirmed: boolean;
           google_category: string | null;
+          roles: string[];
           position: number;
           created_at: string;
           updated_at: string;
@@ -196,6 +197,7 @@ export interface Database {
           source: "google" | "custom";
           license_confirmed?: boolean;
           google_category?: string | null;
+          roles?: string[];
           position?: number;
           created_at?: string;
           updated_at?: string;
@@ -207,6 +209,7 @@ export interface Database {
           source?: "google" | "custom";
           license_confirmed?: boolean;
           google_category?: string | null;
+          roles?: string[];
           position?: number;
           created_at?: string;
           updated_at?: string;
