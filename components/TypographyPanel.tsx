@@ -104,7 +104,12 @@ export default function TypographyPanel({
   const [convertProgress, setConvertProgress] = useState<string | null>(null);
 
   const toggleCollapsed = (fontId: string) => {
-    setCollapsed((prev) => ({ ...prev, [fontId]: !prev[fontId] }));
+    // Default ist eingeklappt (prev[fontId] === undefined -> isCollapsed === true).
+    // Toggle zieht den Default auf "false" explizit mit.
+    setCollapsed((prev) => {
+      const currentCollapsed = prev[fontId] !== false;
+      return { ...prev, [fontId]: currentCollapsed ? false : true };
+    });
   };
 
   const load = useCallback(async () => {
@@ -760,7 +765,7 @@ export default function TypographyPanel({
 
             const cssFamily = cssFamilyName(font);
 
-            const isCollapsed = collapsed[font.id] === true;
+            const isCollapsed = collapsed[font.id] !== false;
             const isDownloading = downloadingFontId === font.id;
             const isExporting = exportingFontId === font.id;
             const isConverting = convertingFontId === font.id;
