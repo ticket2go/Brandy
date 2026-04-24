@@ -428,21 +428,30 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
             groupCategories.find((c) => c.id === activeCategoryId) ?? null;
 
           const swatchData = activeCategory
-            ? groupColors.map((color) => {
-                const stored = valuesByColor
-                  .get(color.id)
-                  ?.get(activeCategory.id);
-                const value = stored ?? defaultValueFor(activeCategory, color);
-                return {
-                  id: color.id,
-                  data: {
-                    name: color.name,
-                    hex: color.hex,
-                    code: value,
-                    codeLabel: activeCategory.label,
-                  } as ColorSwatchData,
-                };
-              })
+            ? groupColors
+                .map((color) => {
+                  const stored = valuesByColor
+                    .get(color.id)
+                    ?.get(activeCategory.id);
+                  const key = activeCategory.key.toLowerCase();
+                  const isDerivable =
+                    key === "hex" || key === "rgb" || key === "cmyk";
+                  if (!stored && !isDerivable) return null;
+                  const value = stored ?? defaultValueFor(activeCategory, color);
+                  return {
+                    id: color.id,
+                    data: {
+                      name: color.name,
+                      hex: color.hex,
+                      code: value,
+                      codeLabel: activeCategory.label,
+                    } as ColorSwatchData,
+                  };
+                })
+                .filter(
+                  (entry): entry is { id: string; data: ColorSwatchData } =>
+                    entry !== null
+                )
             : [];
 
           return (
@@ -478,10 +487,10 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
                             [group]: cat.id,
                           }))
                         }
-                        className={`rounded-full px-3 py-1 pr-6 text-[11px] font-medium uppercase tracking-widest transition ${
+                        className={`rounded-full bg-black px-3 py-1 pr-6 text-[11px] font-medium uppercase tracking-widest text-white transition ${
                           isActive
-                            ? "bg-black text-white"
-                            : "bg-black/85 text-white/70 hover:bg-black hover:text-white"
+                            ? "opacity-100"
+                            : "opacity-50 hover:opacity-80"
                         }`}
                       >
                         {cat.label}
@@ -494,7 +503,7 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
                         }}
                         aria-label={`Kategorie ${cat.label} loeschen`}
                         title="Kategorie loeschen"
-                        className="absolute right-1 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full text-white/60 opacity-0 transition group-hover/pill:opacity-100 hover:bg-white/15 hover:text-white focus:opacity-100 focus:outline-none"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full text-white/80 transition hover:bg-white/15 hover:text-white focus:outline-none"
                       >
                         <svg
                           width="8"
