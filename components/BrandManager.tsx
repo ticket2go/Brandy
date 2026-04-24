@@ -22,6 +22,13 @@ type Brand = {
   colors: string[];
 };
 
+type BrandColorPreview = {
+  brand_id: string;
+  hex: string;
+  group: "print" | "digital";
+  position: number;
+};
+
 export default function BrandManager() {
   const [name, setName] = useState("");
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -58,20 +65,39 @@ export default function BrandManager() {
     if (brandIds.length > 0) {
       const { data: colorRows } = await supabase
         .from("brand_colors")
-        .select("brand_id, hex, position")
+        .select("brand_id, hex, group, position")
         .in("brand_id", brandIds)
         .order("position", { ascending: true });
 
       if (colorRows) {
-        colorsByBrand = (colorRows as Array<{
-          brand_id: string;
-          hex: string;
-        }>).reduce((acc, row) => {
-          const list = acc.get(row.brand_id) ?? [];
-          if (list.length < 3) list.push(row.hex);
-          acc.set(row.brand_id, list);
-          return acc;
-        }, new Map<string, string[]>());
+        const rows = colorRows as BrandColorPreview[];
+        const preferredOrder: BrandColorPreview["group"][] = [
+          "print",
+          "digital",
+        ];
+        for (const brandId of brandIds) {
+          const brandRows = rows.filter((r) => r.brand_id === brandId);
+          let picked: BrandColorPreview[] = [];
+          for (const group of preferredOrder) {
+            const subset = brandRows
+              .filter((r) => r.group === group)
+              .sort((a, b) => a.position - b.position);
+            if (subset.length > 0) {
+              picked = subset;
+              break;
+            }
+          }
+          const seen = new Set<string>();
+          const hexes: string[] = [];
+          for (const row of picked) {
+            const normalized = row.hex.toUpperCase();
+            if (seen.has(normalized)) continue;
+            seen.add(normalized);
+            hexes.push(normalized);
+            if (hexes.length >= 3) break;
+          }
+          colorsByBrand.set(brandId, hexes);
+        }
       }
     }
 
