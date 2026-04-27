@@ -22,7 +22,52 @@ const SEED_USERS: SeedUser[] = [
     fullName: "Marcel",
     isAdmin: false,
   },
+  {
+    username: "hannes",
+    password: "Hannes",
+    fullName: "Hannes",
+    isAdmin: false,
+  },
 ];
+
+async function deleteUserCompletely(
+  supabase: SupabaseClient<Database>,
+  userId: string
+) {
+  // Vor dem Auth-Delete erst die Profil-Spuren entfernen, sonst kann ein
+  // FK-Constraint (organization_members.user_id → profiles.id) zicken.
+  await supabase
+    .from("organization_members")
+    .delete()
+    .eq("user_id", userId);
+  await supabase.from("profiles").delete().eq("id", userId);
+  await supabase.auth.admin.deleteUser(userId);
+}
+
+async function createFreshUser(
+  supabase: SupabaseClient<Database>,
+  seed: SeedUser
+): Promise<{ ok: true; userId: string } | { ok: false; error: string }> {
+  const email = usernameToEmail(seed.username);
+  const created = await supabase.auth.admin.createUser({
+    email,
+    password: seed.password,
+    email_confirm: true,
+    user_metadata: {
+      full_name: seed.fullName,
+      username: seed.username,
+    },
+  });
+  if (created.error || !created.data.user) {
+    return {
+      ok: false,
+      error:
+        created.error?.message ??
+        `Account "${seed.username}" konnte nicht angelegt werden.`,
+    };
+  }
+  return { ok: true, userId: created.data.user.id };
+}
 
 async function ensureUser(
   supabase: SupabaseClient<Database>,
@@ -38,34 +83,34 @@ async function ensureUser(
   let userId: string;
   if (existing) {
     userId = existing.id;
-    // Sicherstellen, dass das Passwort dem Seed entspricht – bequem fürs
-    // Demo, falls jemand das Passwort versehentlich verändert hat.
     const upd = await supabase.auth.admin.updateUserById(userId, {
       password: seed.password,
       email_confirm: true,
+      ban_duration: "none",
     });
     if (upd.error) {
-      return { ok: false, error: upd.error.message };
+      // Self-heal: Wenn der bestehende Account kaputt ist (z.B. weil
+      // er per direktem SQL-Insert ohne korrekte auth.identities-Zeile
+      // angelegt wurde), löschen wir ihn und legen ihn frisch an.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[ensure-admin] update failed for ${seed.username}, recreating:`,
+        upd.error.message
+      );
+      try {
+        await deleteUserCompletely(supabase, userId);
+      } catch {
+        // ignore – der frische createUser unten wird ggf. den
+        // eigentlichen Fehler zurückgeben.
+      }
+      const fresh = await createFreshUser(supabase, seed);
+      if (!fresh.ok) return fresh;
+      userId = fresh.userId;
     }
   } else {
-    const created = await supabase.auth.admin.createUser({
-      email,
-      password: seed.password,
-      email_confirm: true,
-      user_metadata: {
-        full_name: seed.fullName,
-        username: seed.username,
-      },
-    });
-    if (created.error || !created.data.user) {
-      return {
-        ok: false,
-        error:
-          created.error?.message ??
-          `Account "${seed.username}" konnte nicht angelegt werden.`,
-      };
-    }
-    userId = created.data.user.id;
+    const fresh = await createFreshUser(supabase, seed);
+    if (!fresh.ok) return fresh;
+    userId = fresh.userId;
   }
 
   const upsert = await supabase
@@ -109,16 +154,19 @@ export async function POST() {
   }
 
   const results: Record<string, string> = {};
+  const errors: Record<string, string> = {};
   for (const seed of SEED_USERS) {
     const res = await ensureUser(supabase, list.data.users, seed);
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `${seed.username}: ${res.error}` },
-        { status: 500 }
-      );
+    if (res.ok) {
+      results[seed.username] = res.userId;
+    } else {
+      errors[seed.username] = res.error;
     }
-    results[seed.username] = res.userId;
   }
 
-  return NextResponse.json({ ok: true, users: results });
+  return NextResponse.json({
+    ok: Object.keys(errors).length === 0,
+    users: results,
+    errors: Object.keys(errors).length === 0 ? undefined : errors,
+  });
 }
