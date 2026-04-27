@@ -7,6 +7,15 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { useSession } from "./SessionProvider";
 
+const ORG_BUCKET = "org-assets";
+
+function resolveOrgLogoSrc(path: string | null): string | null {
+  if (!path) return null;
+  if (path.startsWith("http")) return path;
+  const { data } = supabase.storage.from(ORG_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
 const ROLE_LABELS: Record<string, string> = {
   manager: "Verwalter",
   geschaeftsfuehrung: "Geschäftsführung",
@@ -179,24 +188,43 @@ export default function AccountPanel() {
           </p>
         ) : (
           <ul className="mt-3 flex flex-col gap-2">
-            {memberships.map((m) => (
-              <li
-                key={m.id}
-                className="flex items-center justify-between rounded-xl border border-black/10 bg-white px-4 py-3"
-              >
-                <div className="flex flex-col">
-                  <span className="text-sm font-semibold text-black">
-                    B. {m.organization.name}
+            {memberships.map((m) => {
+              const logoSrc = resolveOrgLogoSrc(m.organization.logo_url);
+              return (
+                <li
+                  key={m.id}
+                  className="flex items-center justify-between gap-4 rounded-xl border border-black/10 bg-white px-4 py-3"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-black/10 bg-black/5">
+                      {logoSrc ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={logoSrc}
+                          alt={`${m.organization.name} Logo`}
+                          className="h-full w-full object-contain p-1"
+                        />
+                      ) : (
+                        <span className="text-[10px] font-semibold uppercase tracking-widest text-black/30">
+                          {m.organization.name.slice(0, 2)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex min-w-0 flex-col">
+                      <span className="truncate text-sm font-semibold text-black">
+                        B.{m.organization.name}
+                      </span>
+                      <span className="truncate text-xs text-black/50">
+                        {m.organization.legal_name}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-black/5 px-2.5 py-1 text-[11px] font-medium text-black/70">
+                    {ROLE_LABELS[m.role] ?? m.role}
                   </span>
-                  <span className="text-xs text-black/50">
-                    {m.organization.legal_name}
-                  </span>
-                </div>
-                <span className="rounded-full bg-black/5 px-2.5 py-1 text-[11px] font-medium text-black/70">
-                  {ROLE_LABELS[m.role] ?? m.role}
-                </span>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
