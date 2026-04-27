@@ -32,6 +32,7 @@ type Brand = {
   name: string;
   slug: string;
   logo_url: string | null;
+  legal_name: string | null;
 };
 
 type TabKey =
@@ -71,6 +72,10 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingLegalName, setEditingLegalName] = useState(false);
+  const [legalNameDraft, setLegalNameDraft] = useState("");
+  const [savingLegalName, setSavingLegalName] = useState(false);
+  const legalNameInputRef = useRef<HTMLInputElement | null>(null);
   const [exportingIdml, setExportingIdml] = useState(false);
   const [idmlModalOpen, setIdmlModalOpen] = useState(false);
   const [tabContent, setTabContent] = useState<Record<TabKey, boolean>>({
@@ -88,7 +93,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     setError(null);
     const { data, error: loadError } = await supabase
       .from("brands")
-      .select("id, name, slug, logo_url")
+      .select("id, name, slug, logo_url, legal_name")
       .eq("slug", slug)
       .maybeSingle();
 
@@ -158,6 +163,13 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     }
   }, [editingName]);
 
+  useEffect(() => {
+    if (editingLegalName && legalNameInputRef.current) {
+      legalNameInputRef.current.focus();
+      legalNameInputRef.current.select();
+    }
+  }, [editingLegalName]);
+
   const startEditName = () => {
     if (!brand) return;
     setNameDraft(brand.name);
@@ -183,7 +195,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
       .from("brands")
       .update({ name: trimmed })
       .eq("id", brand.id)
-      .select("id, name, slug, logo_url")
+      .select("id, name, slug, logo_url, legal_name")
       .single();
     if (updateError) {
       setError(updateError.message);
@@ -194,6 +206,45 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     setSavingName(false);
     setEditingName(false);
     setNameDraft("");
+  };
+
+  const startEditLegalName = () => {
+    if (!brand) return;
+    setLegalNameDraft(brand.legal_name ?? "");
+    setEditingLegalName(true);
+  };
+
+  const cancelEditLegalName = () => {
+    if (savingLegalName) return;
+    setEditingLegalName(false);
+    setLegalNameDraft("");
+  };
+
+  const commitEditLegalName = async () => {
+    if (!brand || savingLegalName) return;
+    const trimmed = legalNameDraft.trim();
+    const current = brand.legal_name ?? "";
+    if (trimmed === current) {
+      cancelEditLegalName();
+      return;
+    }
+    setSavingLegalName(true);
+    setError(null);
+    const { data, error: updateError } = await supabase
+      .from("brands")
+      .update({ legal_name: trimmed.length > 0 ? trimmed : null })
+      .eq("id", brand.id)
+      .select("id, name, slug, logo_url, legal_name")
+      .single();
+    if (updateError) {
+      setError(updateError.message);
+      setSavingLegalName(false);
+      return;
+    }
+    if (data) setBrand(data);
+    setSavingLegalName(false);
+    setEditingLegalName(false);
+    setLegalNameDraft("");
   };
 
   const logoSrc = useMemo(() => {
@@ -576,68 +627,128 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           <span className="text-black/70">{brand.name}</span>
         </nav>
         <div className="flex items-end justify-between gap-6">
-          <div className="flex min-w-0 items-start gap-2">
-            {editingName ? (
-              <input
-                ref={nameInputRef}
-                type="text"
-                value={nameDraft}
-                onChange={(event) => setNameDraft(event.target.value)}
-                onBlur={commitEditName}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    commitEditName();
-                  } else if (event.key === "Escape") {
-                    event.preventDefault();
-                    cancelEditName();
-                  }
-                }}
-                disabled={savingName}
-                aria-label="Brand-Name bearbeiten"
-                className="m-0 min-w-0 rounded-md border border-black/15 bg-white px-2 py-1 font-bold text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10 disabled:opacity-60"
-                style={{
-                  fontSize: "clamp(2rem, 6vw, 4rem)",
-                  letterSpacing: "-0.02em",
-                  lineHeight: 1.05,
-                }}
-              />
-            ) : (
-              <>
-                <h1
-                  className="m-0 font-bold text-black"
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex min-w-0 items-start gap-2">
+              {editingName ? (
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  value={nameDraft}
+                  onChange={(event) => setNameDraft(event.target.value)}
+                  onBlur={commitEditName}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitEditName();
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      cancelEditName();
+                    }
+                  }}
+                  disabled={savingName}
+                  aria-label="Brand-Name bearbeiten"
+                  className="m-0 min-w-0 rounded-md border border-black/15 bg-white px-2 py-1 font-bold text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10 disabled:opacity-60"
                   style={{
                     fontSize: "clamp(2rem, 6vw, 4rem)",
                     letterSpacing: "-0.02em",
+                    lineHeight: 1.05,
                   }}
-                >
-                  {brand.name}
-                </h1>
-                <button
-                  type="button"
-                  onClick={startEditName}
-                  aria-label="Brand-Name bearbeiten"
-                  title="Namen bearbeiten"
-                  className="mt-2 flex h-7 w-7 items-center justify-center rounded-md text-black/30 transition hover:bg-black/5 hover:text-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    aria-hidden="true"
+                />
+              ) : (
+                <>
+                  <h1
+                    className="m-0 font-bold text-black"
+                    style={{
+                      fontSize: "clamp(2rem, 6vw, 4rem)",
+                      letterSpacing: "-0.02em",
+                    }}
                   >
-                    <path
-                      d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
-                      stroke="currentColor"
-                      strokeWidth="1.25"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              </>
-            )}
+                    {brand.name}
+                  </h1>
+                  <button
+                    type="button"
+                    onClick={startEditName}
+                    aria-label="Brand-Name bearbeiten"
+                    title="Namen bearbeiten"
+                    className="mt-2 flex h-7 w-7 items-center justify-center rounded-md text-black/30 transition hover:bg-black/5 hover:text-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="group flex min-w-0 items-center gap-1.5 pl-1">
+              {editingLegalName ? (
+                <input
+                  ref={legalNameInputRef}
+                  type="text"
+                  value={legalNameDraft}
+                  onChange={(event) => setLegalNameDraft(event.target.value)}
+                  onBlur={commitEditLegalName}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitEditLegalName();
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      cancelEditLegalName();
+                    }
+                  }}
+                  disabled={savingLegalName}
+                  placeholder="Firmierung (z.B. Max Mustermann GmbH)"
+                  aria-label="Firmierung bearbeiten"
+                  className="m-0 min-w-0 rounded-md border border-black/15 bg-white px-2 py-1 text-sm text-black/80 outline-none focus:border-black focus:ring-2 focus:ring-black/10 disabled:opacity-60"
+                />
+              ) : (
+                <>
+                  <span
+                    className="truncate text-sm text-black/55"
+                    title={brand.legal_name ?? "Firmierung hinzufügen"}
+                  >
+                    {brand.legal_name && brand.legal_name.length > 0
+                      ? brand.legal_name
+                      : "Firmierung hinzufügen"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={startEditLegalName}
+                    aria-label="Firmierung bearbeiten"
+                    title="Firmierung bearbeiten"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-black/30 transition hover:bg-black/5 hover:text-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <input
