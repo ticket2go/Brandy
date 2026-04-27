@@ -94,58 +94,71 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           .eq("user_id", user.id),
       ]);
 
+      // Profil: nur überschreiben, wenn der Fetch ein Ergebnis (auch
+      // null) sauber zurückgibt. Bei einem Fehler (z.B. transientes
+      // 401 nach Tab-Wechsel) behalten wir den bisherigen State, damit
+      // is_admin & Co. nicht kurzzeitig wegfallen.
       if (profileRes.error) {
-        // Tabelle/Spalte fehlt? Kein harter Fehler, einfach ohne Profil
-        // weiterlaufen, damit die UI nicht in "Lade …" hängen bleibt.
         // eslint-disable-next-line no-console
-        console.warn("[SessionProvider] profile load:", profileRes.error.message);
+        console.warn(
+          "[SessionProvider] profile load:",
+          profileRes.error.message
+        );
+      } else {
+        setProfile(
+          profileRes.data
+            ? (profileRes.data as Profile)
+            : ({
+                id: user.id,
+                username: null,
+                full_name: null,
+                is_admin: false,
+              } satisfies Profile)
+        );
       }
+
+      // Mitgliedschaften: dito. Ein transienter Error darf NICHT zu
+      // einem leeren Memberships-Array führen, sonst kippt activeOrg
+      // auf null und nachgelagerte Listen (BrandManager) setzen sich
+      // auf "Lade …" zurück.
       if (membersRes.error) {
         // eslint-disable-next-line no-console
         console.warn(
           "[SessionProvider] memberships load:",
           membersRes.error.message
         );
+      } else {
+        const rows = (membersRes.data ?? []) as Array<{
+          id: string;
+          organization_id: string;
+          user_id: string;
+          role: MemberRole;
+          organization: Organization | null;
+        }>;
+        const cleaned: MembershipWithOrg[] = rows
+          .filter((r) => r.organization)
+          .map((r) => ({
+            id: r.id,
+            organization_id: r.organization_id,
+            user_id: r.user_id,
+            role: r.role,
+            organization: r.organization as Organization,
+          }));
+        // Defensive: Wenn die Antwort technisch erfolgreich, aber leer
+        // ist, obwohl wir vorher Mitgliedschaften hatten, werten wir
+        // das als transienten RLS-/Auth-Schluckauf nach Tab-Wechsel und
+        // behalten den alten State. Echte "User wurde aus allen Orgs
+        // entfernt"-Fälle korrigieren sich beim nächsten Refresh.
+        setMemberships((prev) => {
+          if (cleaned.length === 0 && prev.length > 0) return prev;
+          return cleaned;
+        });
       }
-
-      setProfile(
-        profileRes.data
-          ? (profileRes.data as Profile)
-          : ({
-              id: user.id,
-              username: null,
-              full_name: null,
-              is_admin: false,
-            } satisfies Profile)
-      );
-
-      const rows = (membersRes.data ?? []) as Array<{
-        id: string;
-        organization_id: string;
-        user_id: string;
-        role: MemberRole;
-        organization: Organization | null;
-      }>;
-      const cleaned: MembershipWithOrg[] = rows
-        .filter((r) => r.organization)
-        .map((r) => ({
-          id: r.id,
-          organization_id: r.organization_id,
-          user_id: r.user_id,
-          role: r.role,
-          organization: r.organization as Organization,
-        }));
-      setMemberships(cleaned);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("[SessionProvider] loadProfileAndMemberships failed", err);
-      setProfile({
-        id: user.id,
-        username: null,
-        full_name: null,
-        is_admin: false,
-      });
-      setMemberships([]);
+      // Bei einem unerwarteten Fehler ebenfalls den bisherigen State
+      // erhalten – kein Hard-Reset auf "kein Profil / keine Orga".
     }
   }, []);
 

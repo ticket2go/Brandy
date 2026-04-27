@@ -54,8 +54,19 @@ export default function BrandManager() {
   }, [brands]);
 
   const loadBrands = useCallback(async () => {
-    if (!user || !activeOrg) {
+    if (!user) {
+      // Echter Logout: Liste leeren.
       setBrands([]);
+      setLoading(false);
+      return;
+    }
+    if (!activeOrg) {
+      // Kein activeOrg: könnte ein transienter Zustand sein (Memberships
+      // wurden gerade kurz neu geladen). Wenn wir bereits Brands haben,
+      // zeigen wir die alten weiter; loading wird zwingend beendet.
+      if (brandsRef.current.length === 0) {
+        setBrands([]);
+      }
       setLoading(false);
       return;
     }
