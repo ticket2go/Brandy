@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { supabase } from "@/lib/supabase/client";
 import { useSession } from "./SessionProvider";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -17,7 +18,14 @@ const ROLE_LABELS: Record<string, string> = {
 
 export default function AccountPanel() {
   const router = useRouter();
-  const { user, profile, memberships, loading, signOut } = useSession();
+  const { user, profile, memberships, loading, signOut, refresh } =
+    useSession();
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (loading) return;
@@ -25,6 +33,13 @@ export default function AccountPanel() {
       router.replace("/login");
     }
   }, [loading, user, router]);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
 
   if (loading) {
     return (
@@ -35,15 +50,105 @@ export default function AccountPanel() {
   }
   if (!user) return null;
 
+  const displayName =
+    profile?.full_name?.trim() || profile?.username || "Mein Account";
+
+  const startEdit = () => {
+    setError(null);
+    setDraft(profile?.full_name ?? "");
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    if (saving) return;
+    setEditing(false);
+    setDraft("");
+    setError(null);
+  };
+
+  const commitEdit = async () => {
+    if (!user || saving) return;
+    const trimmed = draft.trim();
+    if (trimmed === (profile?.full_name ?? "")) {
+      cancelEdit();
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({ full_name: trimmed.length > 0 ? trimmed : null })
+      .eq("id", user.id);
+    if (updateError) {
+      setError(updateError.message);
+      setSaving(false);
+      return;
+    }
+    await refresh();
+    setSaving(false);
+    setEditing(false);
+    setDraft("");
+  };
+
   return (
     <section className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6">
       <header className="flex flex-col gap-1">
         <span className="text-xs font-medium uppercase tracking-widest text-black/40">
           Account
         </span>
-        <h1 className="text-4xl font-bold tracking-tight text-black">
-          {profile?.full_name ?? profile?.username ?? "Mein Account"}
-        </h1>
+        <div className="flex min-w-0 items-center gap-2">
+          {editing ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commitEdit}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitEdit();
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelEdit();
+                }
+              }}
+              disabled={saving}
+              placeholder={profile?.username ?? "Dein Name"}
+              aria-label="Anzeigename bearbeiten"
+              className="m-0 min-w-0 rounded-md border border-black/15 bg-white px-2 py-1 text-4xl font-bold tracking-tight text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10 disabled:opacity-60"
+            />
+          ) : (
+            <h1 className="m-0 truncate text-4xl font-bold tracking-tight text-black">
+              {displayName}
+            </h1>
+          )}
+          {!editing && (
+            <button
+              type="button"
+              onClick={startEdit}
+              aria-label="Namen bearbeiten"
+              title="Namen bearbeiten"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-black/30 transition hover:bg-black/5 hover:text-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 14 14"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
+                  stroke="currentColor"
+                  strokeWidth="1.25"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
         <p className="text-sm text-black/60">
           Eingeloggt als{" "}
           <code className="rounded bg-black/5 px-1.5 py-0.5 text-[12px] text-black/80">
@@ -55,6 +160,14 @@ export default function AccountPanel() {
             </span>
           )}
         </p>
+        {error && (
+          <p
+            role="alert"
+            className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+          >
+            {error}
+          </p>
+        )}
       </header>
 
       <div className="rounded-2xl border border-black/10 bg-white p-5">
