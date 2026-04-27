@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -135,8 +136,15 @@ export default function NavCard() {
   }, [profile]);
 
   const handleSignOut = async () => {
-    await signOut();
-    router.push("/login");
+    try {
+      await signOut();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[NavCard] signOut failed", err);
+    } finally {
+      router.replace("/login");
+      router.refresh();
+    }
   };
 
   return (
@@ -212,12 +220,12 @@ export default function NavCard() {
           <ul className="space-y-[2px] text-[15px] font-medium tracking-tight">
             {primaryItems.map((item) => (
               <li key={item.label} data-nav-item>
-                <a
+                <Link
                   href={item.href}
                   className="block rounded-sm py-[1px] text-white transition-colors hover:text-neutral-400"
                 >
                   {item.label}
-                </a>
+                </Link>
               </li>
             ))}
           </ul>
@@ -237,12 +245,12 @@ export default function NavCard() {
           <ul className="space-y-[2px] text-[13px]">
             {resourceItems.map((item) => (
               <li key={item.label} data-nav-item>
-                <a
+                <Link
                   href={item.href}
                   className="block rounded-sm py-[1px] text-neutral-300 transition-colors hover:text-white"
                 >
                   {item.label}
-                </a>
+                </Link>
               </li>
             ))}
             {user ? (
@@ -266,20 +274,20 @@ export default function NavCard() {
             ) : (
               <>
                 <li data-nav-item>
-                  <a
+                  <Link
                     href="/login"
                     className="block rounded-sm py-[1px] text-neutral-300 transition-colors hover:text-white"
                   >
                     Login
-                  </a>
+                  </Link>
                 </li>
                 <li data-nav-item>
-                  <a
+                  <Link
                     href="/register"
                     className="block rounded-sm py-[1px] text-neutral-300 transition-colors hover:text-white"
                   >
                     Registrieren
-                  </a>
+                  </Link>
                 </li>
               </>
             )}

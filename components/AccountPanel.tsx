@@ -100,8 +100,15 @@ export default function AccountPanel() {
         <button
           type="button"
           onClick={async () => {
-            await signOut();
-            router.push("/login");
+            try {
+              await signOut();
+            } catch (err) {
+              // eslint-disable-next-line no-console
+              console.error("[AccountPanel] signOut failed", err);
+            } finally {
+              router.replace("/login");
+              router.refresh();
+            }
           }}
           className="rounded-xl border border-black/15 px-4 py-2 text-sm text-black/70 transition hover:bg-black/5"
         >

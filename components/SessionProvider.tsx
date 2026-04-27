@@ -77,70 +77,127 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const [profileRes, membersRes] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select("id, username, full_name, is_admin")
-        .eq("id", user.id)
-        .maybeSingle(),
-      supabase
-        .from("organization_members")
-        .select(
-          "id, organization_id, user_id, role, organization:organizations(id, name, legal_name, slug, logo_url, manager_id)"
-        )
-        .eq("user_id", user.id),
-    ]);
+    try {
+      const [profileRes, membersRes] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, username, full_name, is_admin")
+          .eq("id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("organization_members")
+          .select(
+            "id, organization_id, user_id, role, organization:organizations(id, name, legal_name, slug, logo_url, manager_id)"
+          )
+          .eq("user_id", user.id),
+      ]);
 
-    if (profileRes.data) {
-      setProfile(profileRes.data as Profile);
-    } else {
-      setProfile(null);
+      if (profileRes.error) {
+        // Tabelle/Spalte fehlt? Kein harter Fehler, einfach ohne Profil
+        // weiterlaufen, damit die UI nicht in "Lade …" hängen bleibt.
+        // eslint-disable-next-line no-console
+        console.warn("[SessionProvider] profile load:", profileRes.error.message);
+      }
+      if (membersRes.error) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[SessionProvider] memberships load:",
+          membersRes.error.message
+        );
+      }
+
+      setProfile(
+        profileRes.data
+          ? (profileRes.data as Profile)
+          : ({
+              id: user.id,
+              username: null,
+              full_name: null,
+              is_admin: false,
+            } satisfies Profile)
+      );
+
+      const rows = (membersRes.data ?? []) as Array<{
+        id: string;
+        organization_id: string;
+        user_id: string;
+        role: MemberRole;
+        organization: Organization | null;
+      }>;
+      const cleaned: MembershipWithOrg[] = rows
+        .filter((r) => r.organization)
+        .map((r) => ({
+          id: r.id,
+          organization_id: r.organization_id,
+          user_id: r.user_id,
+          role: r.role,
+          organization: r.organization as Organization,
+        }));
+      setMemberships(cleaned);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[SessionProvider] loadProfileAndMemberships failed", err);
+      setProfile({
+        id: user.id,
+        username: null,
+        full_name: null,
+        is_admin: false,
+      });
+      setMemberships([]);
     }
-
-    const rows = (membersRes.data ?? []) as Array<{
-      id: string;
-      organization_id: string;
-      user_id: string;
-      role: MemberRole;
-      organization: Organization | null;
-    }>;
-    const cleaned: MembershipWithOrg[] = rows
-      .filter((r) => r.organization)
-      .map((r) => ({
-        id: r.id,
-        organization_id: r.organization_id,
-        user_id: r.user_id,
-        role: r.role,
-        organization: r.organization as Organization,
-      }));
-    setMemberships(cleaned);
   }, []);
 
   const refresh = useCallback(async () => {
-    const { data } = await supabase.auth.getSession();
-    setSession(data.session);
-    await loadProfileAndMemberships(data.session?.user ?? null);
+    try {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session);
+      await loadProfileAndMemberships(data.session?.user ?? null);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[SessionProvider] refresh failed", err);
+    }
   }, [loadProfileAndMemberships]);
 
   useEffect(() => {
     let cancelled = false;
+
+    // Notnagel: spätestens nach 6s freigeben, damit die UI niemals
+    // dauerhaft in "Lade …" hängen bleibt – auch wenn getSession() aus
+    // irgendeinem Grund nicht zurückkehren sollte.
+    const safety = window.setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 6000);
+
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (cancelled) return;
-      setSession(data.session);
-      await loadProfileAndMemberships(data.session?.user ?? null);
-      setLoading(false);
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (cancelled) return;
+        setSession(data.session);
+        await loadProfileAndMemberships(data.session?.user ?? null);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[SessionProvider] init failed", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
 
     const { data: subscription } = supabase.auth.onAuthStateChange(
       async (_event, newSession) => {
+        if (cancelled) return;
         setSession(newSession);
-        await loadProfileAndMemberships(newSession?.user ?? null);
+        try {
+          await loadProfileAndMemberships(newSession?.user ?? null);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error("[SessionProvider] auth change failed", err);
+        }
       }
     );
 
     return () => {
       cancelled = true;
+      window.clearTimeout(safety);
       subscription.subscription.unsubscribe();
     };
   }, [loadProfileAndMemberships]);
