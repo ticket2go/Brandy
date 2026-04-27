@@ -306,6 +306,33 @@ export interface Database {
         };
         Relationships: [];
       };
+      brand_local_entries: {
+        Row: {
+          id: string;
+          brand_id: string;
+          content: string;
+          position: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          brand_id: string;
+          content: string;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          brand_id?: string;
+          content?: string;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       assets: {
         Row: {
           id: string;
