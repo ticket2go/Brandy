@@ -23,11 +23,32 @@ export default function LoginForm() {
 
   useEffect(() => {
     if (ensuredRef.current) return;
+    if (user) return;
+    // ensure-admin nur einmal pro Browser ausführen. Das verhindert,
+    // dass ein versehentlicher /login-Aufruf bei einem schon eingeloggten
+    // User die Seed-Logik triggert und dadurch Sessions stört.
+    try {
+      const flag = window.sessionStorage.getItem("bs.adminEnsured");
+      if (flag === "1") {
+        ensuredRef.current = true;
+        return;
+      }
+    } catch {
+      // ignore
+    }
     ensuredRef.current = true;
-    fetch("/api/auth/ensure-admin", { method: "POST" }).catch(() => {
-      // ignore – Login-Form bleibt benutzbar, Fehler kommt sonst beim Login
-    });
-  }, []);
+    fetch("/api/auth/ensure-admin", { method: "POST" })
+      .then(() => {
+        try {
+          window.sessionStorage.setItem("bs.adminEnsured", "1");
+        } catch {
+          // ignore
+        }
+      })
+      .catch(() => {
+        // ignore – Login-Form bleibt benutzbar, Fehler kommt sonst beim Login
+      });
+  }, [user]);
 
   useEffect(() => {
     if (user) {
