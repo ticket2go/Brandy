@@ -199,12 +199,29 @@ export default function NavCard() {
               <p className="text-[10px] uppercase tracking-[0.12em] text-neutral-500">
                 Aktive Orga
               </p>
-              <p
-                className="mt-0.5 truncate text-[13px] font-semibold text-white"
-                title={activeOrg.name}
+              <Link
+                href={`/admin/organizations/${activeOrg.id}`}
+                className="mt-0.5 flex items-center gap-1.5 truncate text-[13px] font-semibold text-white transition hover:text-neutral-300"
+                title={`B.${activeOrg.name} öffnen & bearbeiten`}
               >
-                B.{activeOrg.name}
-              </p>
+                <span className="truncate">B.{activeOrg.name}</span>
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  aria-hidden
+                  className="shrink-0 opacity-60"
+                >
+                  <path
+                    d="M5 3l4 4-4 4"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </Link>
               {memberships.length > 1 && (
                 <select
                   value={activeOrg.id}
