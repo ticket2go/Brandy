@@ -9,6 +9,7 @@ type BrandCardProps = {
   slug: string;
   logoUrl?: string | null;
   colors?: string[];
+  legalName?: string | null;
   onDelete?: () => void;
 };
 
@@ -24,6 +25,7 @@ export default function BrandCard({
   slug,
   logoUrl,
   colors,
+  legalName,
   onDelete,
 }: BrandCardProps) {
   const logoSrc = resolveLogoSrc(logoUrl);
@@ -112,17 +114,20 @@ export default function BrandCard({
       <div aria-hidden className="h-9" />
 
       <footer className="pointer-events-none relative z-[2] flex items-end justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex min-w-0 flex-col gap-0.5">
           <h2
             className={`line-clamp-2 text-xl font-semibold tracking-tight ${textMain}`}
           >
             {name}
           </h2>
-          <span
-            className={`text-xs uppercase tracking-widest ${textMuted}`}
-          >
-            Brand
-          </span>
+          {legalName && (
+            <span
+              className={`truncate text-[11px] font-normal normal-case tracking-normal ${textMuted}`}
+              title={legalName}
+            >
+              {legalName}
+            </span>
+          )}
         </div>
       </footer>
     </article>
