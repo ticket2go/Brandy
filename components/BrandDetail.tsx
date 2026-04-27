@@ -76,6 +76,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
   const [legalNameDraft, setLegalNameDraft] = useState("");
   const [savingLegalName, setSavingLegalName] = useState(false);
   const legalNameInputRef = useRef<HTMLInputElement | null>(null);
+  const [editMode, setEditMode] = useState(false);
   const [exportingIdml, setExportingIdml] = useState(false);
   const [idmlModalOpen, setIdmlModalOpen] = useState(false);
   const [tabContent, setTabContent] = useState<Record<TabKey, boolean>>({
@@ -619,12 +620,49 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
   return (
     <section className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6">
       <header className="flex flex-col gap-4">
-        <nav className="text-xs uppercase tracking-widest text-black/40">
+        <nav className="flex items-center gap-2 text-xs uppercase tracking-widest text-black/40">
           <Link href="/" className="hover:text-black">
             Brands
           </Link>
-          <span className="mx-2">/</span>
+          <span>/</span>
           <span className="text-black/70">{brand.name}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setEditMode((prev) => {
+                const next = !prev;
+                if (!next) {
+                  if (editingName && !savingName) cancelEditName();
+                  if (editingLegalName && !savingLegalName) cancelEditLegalName();
+                }
+                return next;
+              });
+            }}
+            aria-pressed={editMode}
+            aria-label={editMode ? "Bearbeiten beenden" : "Brand bearbeiten"}
+            title={editMode ? "Bearbeiten beenden" : "Brand bearbeiten"}
+            className={`ml-auto flex h-6 w-6 items-center justify-center rounded-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20 ${
+              editMode
+                ? "bg-black text-white hover:bg-black/85"
+                : "text-black/30 hover:bg-black/5 hover:text-black/70"
+            }`}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 14 14"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
+                stroke="currentColor"
+                strokeWidth="1.25"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </nav>
         <div className="flex items-end justify-between gap-6">
           <div className="flex min-w-0 flex-col gap-1">
@@ -665,90 +703,98 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
                   >
                     {brand.name}
                   </h1>
-                  <button
-                    type="button"
-                    onClick={startEditName}
-                    aria-label="Brand-Name bearbeiten"
-                    title="Namen bearbeiten"
-                    className="mt-2 flex h-7 w-7 items-center justify-center rounded-md text-black/30 transition hover:bg-black/5 hover:text-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 14 14"
-                      fill="none"
-                      aria-hidden="true"
+                  {editMode && (
+                    <button
+                      type="button"
+                      onClick={startEditName}
+                      aria-label="Brand-Name bearbeiten"
+                      title="Namen bearbeiten"
+                      className="mt-2 flex h-7 w-7 items-center justify-center rounded-md text-black/30 transition hover:bg-black/5 hover:text-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
                     >
-                      <path
-                        d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
-                        stroke="currentColor"
-                        strokeWidth="1.25"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
+                          stroke="currentColor"
+                          strokeWidth="1.25"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  )}
                 </>
               )}
             </div>
-            <div className="group flex min-w-0 items-center gap-1.5 pl-1">
-              {editingLegalName ? (
-                <input
-                  ref={legalNameInputRef}
-                  type="text"
-                  value={legalNameDraft}
-                  onChange={(event) => setLegalNameDraft(event.target.value)}
-                  onBlur={commitEditLegalName}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      commitEditLegalName();
-                    } else if (event.key === "Escape") {
-                      event.preventDefault();
-                      cancelEditLegalName();
-                    }
-                  }}
-                  disabled={savingLegalName}
-                  placeholder="Firmierung (z.B. Max Mustermann GmbH)"
-                  aria-label="Firmierung bearbeiten"
-                  className="m-0 min-w-0 rounded-md border border-black/15 bg-white px-2 py-1 text-sm text-black/80 outline-none focus:border-black focus:ring-2 focus:ring-black/10 disabled:opacity-60"
-                />
-              ) : (
-                <>
-                  <span
-                    className="truncate text-sm text-black/55"
-                    title={brand.legal_name ?? "Firmierung hinzufügen"}
-                  >
-                    {brand.legal_name && brand.legal_name.length > 0
-                      ? brand.legal_name
-                      : "Firmierung hinzufügen"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={startEditLegalName}
+            {(brand.legal_name && brand.legal_name.length > 0) ||
+            editMode ||
+            editingLegalName ? (
+              <div className="group flex min-w-0 items-center gap-1.5 pl-1">
+                {editingLegalName ? (
+                  <input
+                    ref={legalNameInputRef}
+                    type="text"
+                    value={legalNameDraft}
+                    onChange={(event) => setLegalNameDraft(event.target.value)}
+                    onBlur={commitEditLegalName}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        commitEditLegalName();
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelEditLegalName();
+                      }
+                    }}
+                    disabled={savingLegalName}
+                    placeholder="Firmierung (z.B. Max Mustermann GmbH)"
                     aria-label="Firmierung bearbeiten"
-                    title="Firmierung bearbeiten"
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-black/30 transition hover:bg-black/5 hover:text-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 14 14"
-                      fill="none"
-                      aria-hidden="true"
+                    className="m-0 min-w-0 rounded-md border border-black/15 bg-white px-2 py-1 text-sm text-black/80 outline-none focus:border-black focus:ring-2 focus:ring-black/10 disabled:opacity-60"
+                  />
+                ) : (
+                  <>
+                    <span
+                      className="truncate text-sm text-black/55"
+                      title={brand.legal_name ?? "Firmierung hinzufügen"}
                     >
-                      <path
-                        d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
-                        stroke="currentColor"
-                        strokeWidth="1.25"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
-                </>
-              )}
-            </div>
+                      {brand.legal_name && brand.legal_name.length > 0
+                        ? brand.legal_name
+                        : "Firmierung hinzufügen"}
+                    </span>
+                    {editMode && (
+                      <button
+                        type="button"
+                        onClick={startEditLegalName}
+                        aria-label="Firmierung bearbeiten"
+                        title="Firmierung bearbeiten"
+                        className="flex h-6 w-6 items-center justify-center rounded-md text-black/30 transition hover:bg-black/5 hover:text-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 14 14"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
+                            stroke="currentColor"
+                            strokeWidth="1.25"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
           <div className="flex items-center gap-3">
             <input
@@ -767,6 +813,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
                   alt={`${brand.name} Logo`}
                   className="h-14 w-14 rounded-xl border border-black/10 bg-white object-contain p-2"
                 />
+                {(editMode || uploading) && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -798,6 +845,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
                     </svg>
                   )}
                 </button>
+                )}
               </div>
             ) : (
               <button
