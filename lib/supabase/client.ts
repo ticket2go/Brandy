@@ -47,6 +47,13 @@ export const supabase: SupabaseClient<Database> = createClient<Database>(
       autoRefreshToken: true,
       detectSessionInUrl: true,
       lock: processLock,
+      // Kürzeres Lock-Timeout: wenn ein interner Auth-Recover hängt,
+      // wartet eine konkurrierende Auth-Operation nicht 5s, sondern
+      // klaut den Lock nach 1.5s. Das verhindert, dass Datenqueries
+      // nach Tab-Wechsel hinter einem stehengebliebenen Recover
+      // ewig warten.
+      // (Nicht in den TS-Typen exposed, geht aber durch zur GoTrue.)
+      ...({ lockAcquireTimeout: 1500 } as Record<string, unknown>),
     },
   }
 );

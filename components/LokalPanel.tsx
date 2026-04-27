@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { supabase } from "@/lib/supabase/client";
+import { safeQuery } from "@/lib/supabase/safeQuery";
 import { useVisibilityReload } from "@/lib/useVisibilityReload";
 
 import ConfirmDialog from "./ConfirmDialog";
@@ -50,12 +51,28 @@ export default function LokalPanel({ brandId, onCountChange }: LokalPanelProps) 
       setLoading(true);
     }
     setError(null);
-    const { data, error: loadError } = await supabase
-      .from("brand_local_entries")
-      .select("id, brand_id, content, position, created_at, updated_at")
-      .eq("brand_id", brandId)
-      .order("position", { ascending: true })
-      .order("created_at", { ascending: true });
+    let result;
+    try {
+      result = await safeQuery(
+        () =>
+          supabase
+            .from("brand_local_entries")
+            .select("id, brand_id, content, position, created_at, updated_at")
+            .eq("brand_id", brandId)
+            .order("position", { ascending: true })
+            .order("created_at", { ascending: true }),
+        { label: "brand-local-entries" }
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[LokalPanel] load failed", err);
+      if (!hasDataRef.current) {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+      }
+      setLoading(false);
+      return;
+    }
+    const { data, error: loadError } = result;
 
     if (loadError) {
       if (!hasDataRef.current) {

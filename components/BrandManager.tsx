@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { supabase } from "@/lib/supabase/client";
+import { safeQuery } from "@/lib/supabase/safeQuery";
 import { slugify } from "@/lib/slugify";
 
 import BrandCard from "./BrandCard";
@@ -78,35 +79,23 @@ export default function BrandManager() {
     }
     setError(null);
 
-    // Safety-Timeout: wenn Supabase-Queries hängen (z.B. weil das
-    // Auth-Token nach Tab-Wechsel im Hintergrund verfällt und der
-    // Auto-Refresh verzögert ist), darf die UI nicht ewig in
-    // "Lade Brands …" hängen bleiben. Wir geben dem Lauf max. 12s
-    // und befreien das loading-Flag dann zwingend.
-    let safetyTimer: ReturnType<typeof setTimeout> | null = null;
-    const safety = new Promise<"timeout">((resolve) => {
-      safetyTimer = setTimeout(() => resolve("timeout"), 12000);
-    });
-
     try {
-      const brandsQuery = supabase
-        .from("brands")
-        .select("id, name, slug, logo_url, legal_name, organization_id")
-        .eq("organization_id", activeOrg.id)
-        .order("created_at", { ascending: true });
+      const brandsResult = await safeQuery(
+        () =>
+          supabase
+            .from("brands")
+            .select("id, name, slug, logo_url, legal_name, organization_id")
+            .eq("organization_id", activeOrg.id)
+            .order("created_at", { ascending: true }),
+        { label: "brands" }
+      );
 
-      const result = await Promise.race([brandsQuery, safety]);
-      if (result === "timeout") {
-        setError(
-          "Brands konnten nicht geladen werden (Timeout). Bitte aktualisiere die Seite."
-        );
-        return;
-      }
-
-      const { data, error: loadError } = result;
+      const { data, error: loadError } = brandsResult;
       if (loadError) {
-        setError(loadError.message);
-        setBrands([]);
+        if (brandsRef.current.length === 0) {
+          setError(loadError.message);
+          setBrands([]);
+        }
         return;
       }
 
@@ -115,13 +104,16 @@ export default function BrandManager() {
 
       const colorsByBrand = new Map<string, string[]>();
       if (brandIds.length > 0) {
-        const colorsQuery = supabase
-          .from("brand_colors")
-          .select("brand_id, hex, group, position")
-          .in("brand_id", brandIds)
-          .order("position", { ascending: true });
-        const colorsResult = await Promise.race([colorsQuery, safety]);
-        if (colorsResult !== "timeout") {
+        try {
+          const colorsResult = await safeQuery(
+            () =>
+              supabase
+                .from("brand_colors")
+                .select("brand_id, hex, group, position")
+                .in("brand_id", brandIds)
+                .order("position", { ascending: true }),
+            { label: "brand-colors-preview" }
+          );
           const colorRows = colorsResult.data;
           if (colorRows) {
             const rows = colorRows as BrandColorPreview[];
@@ -153,6 +145,8 @@ export default function BrandManager() {
               colorsByBrand.set(brandId, hexes);
             }
           }
+        } catch {
+          // Farb-Vorschau ist optional – bei Timeout still überspringen.
         }
       }
 
@@ -165,9 +159,10 @@ export default function BrandManager() {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("[BrandManager] loadBrands failed", err);
-      setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+      if (brandsRef.current.length === 0) {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+      }
     } finally {
-      if (safetyTimer) clearTimeout(safetyTimer);
       setLoading(false);
     }
   }, [activeOrg, user]);

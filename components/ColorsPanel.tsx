@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { supabase } from "@/lib/supabase/client";
+import { safeQuery } from "@/lib/supabase/safeQuery";
 import { useVisibilityReload } from "@/lib/useVisibilityReload";
 
 import {
@@ -117,23 +118,48 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
       setLoading(true);
     }
     setError(null);
-    const [catsRes, colorsRes, valuesRes] = await Promise.all([
-      supabase
-        .from("brand_color_categories")
-        .select("id, brand_id, group, key, label, position")
-        .eq("brand_id", brandId)
-        .order("group", { ascending: true })
-        .order("position", { ascending: true }),
-      supabase
-        .from("brand_colors")
-        .select("id, brand_id, group, name, hex, role, position")
-        .eq("brand_id", brandId)
-        .order("position", { ascending: true })
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("brand_color_values")
-        .select("id, color_id, category_id, value"),
-    ]);
+    let catsRes, colorsRes, valuesRes;
+    try {
+      [catsRes, colorsRes, valuesRes] = await Promise.all([
+        safeQuery(
+          () =>
+            supabase
+              .from("brand_color_categories")
+              .select("id, brand_id, group, key, label, position")
+              .eq("brand_id", brandId)
+              .order("group", { ascending: true })
+              .order("position", { ascending: true }),
+          { label: "color-categories" }
+        ),
+        safeQuery(
+          () =>
+            supabase
+              .from("brand_colors")
+              .select("id, brand_id, group, name, hex, role, position")
+              .eq("brand_id", brandId)
+              .order("position", { ascending: true })
+              .order("created_at", { ascending: true }),
+          { label: "brand-colors" }
+        ),
+        safeQuery(
+          () =>
+            supabase
+              .from("brand_color_values")
+              .select("id, color_id, category_id, value"),
+          { label: "color-values" }
+        ),
+      ]);
+    } catch (err) {
+      // Timeout / Netzwerk: loading-State sicher beenden, aber alten
+      // State erhalten, falls schon Daten da sind.
+      // eslint-disable-next-line no-console
+      console.error("[ColorsPanel] load failed", err);
+      if (!hasDataRef.current) {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+      }
+      setLoading(false);
+      return;
+    }
 
     if (catsRes.error) {
       if (!hasDataRef.current) setError(catsRes.error.message);

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 
 import { supabase } from "@/lib/supabase/client";
+import { safeQuery } from "@/lib/supabase/safeQuery";
 import { useVisibilityReload } from "@/lib/useVisibilityReload";
 import {
   LOGO_COLOR_SPACE_LABELS,
@@ -86,14 +87,31 @@ export default function LogokitPanel({
       setLoading(true);
     }
     setError(null);
-    const { data, error: loadError } = await supabase
-      .from("brand_logos")
-      .select(
-        "id, brand_id, file_name, format, variant, polarity, color_space, storage_path, mime_type, size_bytes, position"
-      )
-      .eq("brand_id", brandId)
-      .order("position", { ascending: true })
-      .order("created_at", { ascending: true });
+    let result;
+    try {
+      result = await safeQuery(
+        () =>
+          supabase
+            .from("brand_logos")
+            .select(
+              "id, brand_id, file_name, format, variant, polarity, color_space, storage_path, mime_type, size_bytes, position"
+            )
+            .eq("brand_id", brandId)
+            .order("position", { ascending: true })
+            .order("created_at", { ascending: true }),
+        { label: "brand-logos" }
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[LogokitPanel] load failed", err);
+      if (!hasDataRef.current) {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+        setLogos([]);
+      }
+      setLoading(false);
+      return;
+    }
+    const { data, error: loadError } = result;
     if (loadError) {
       if (!hasDataRef.current) {
         setError(loadError.message);

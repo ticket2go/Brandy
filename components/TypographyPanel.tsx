@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 
 import { supabase } from "@/lib/supabase/client";
+import { safeQuery } from "@/lib/supabase/safeQuery";
 import { cssFormatName, formatLabel, mimeTypeForFormat } from "@/lib/fontFormat";
 import { useVisibilityReload } from "@/lib/useVisibilityReload";
 
@@ -120,21 +121,40 @@ export default function TypographyPanel({
       setLoading(true);
     }
     setError(null);
-    const [fontsRes, filesRes] = await Promise.all([
-      supabase
-        .from("brand_fonts")
-        .select(
-          "id, brand_id, family, source, license_confirmed, google_category, roles, position"
-        )
-        .eq("brand_id", brandId)
-        .order("position", { ascending: true })
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("brand_font_files")
-        .select(
-          "id, font_id, variant, style_label, weight, italic, format, storage_path, size_bytes"
+    let fontsRes, filesRes;
+    try {
+      [fontsRes, filesRes] = await Promise.all([
+        safeQuery(
+          () =>
+            supabase
+              .from("brand_fonts")
+              .select(
+                "id, brand_id, family, source, license_confirmed, google_category, roles, position"
+              )
+              .eq("brand_id", brandId)
+              .order("position", { ascending: true })
+              .order("created_at", { ascending: true }),
+          { label: "brand-fonts" }
         ),
-    ]);
+        safeQuery(
+          () =>
+            supabase
+              .from("brand_font_files")
+              .select(
+                "id, font_id, variant, style_label, weight, italic, format, storage_path, size_bytes"
+              ),
+          { label: "brand-font-files" }
+        ),
+      ]);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[TypographyPanel] load failed", err);
+      if (!hasDataRef.current) {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+      }
+      setLoading(false);
+      return;
+    }
 
     if (fontsRes.error) {
       if (!hasDataRef.current) setError(fontsRes.error.message);
