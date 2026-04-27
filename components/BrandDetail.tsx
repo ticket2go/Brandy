@@ -92,30 +92,82 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     lokal: false,
   });
 
-  const loadBrand = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    const { data, error: loadError } = await supabase
-      .from("brands")
-      .select("id, name, slug, logo_url, legal_name, organization_id")
-      .eq("slug", slug)
-      .maybeSingle();
+  const brandRef = useRef<Brand | null>(null);
+  useEffect(() => {
+    brandRef.current = brand;
+  }, [brand]);
 
-    if (loadError) {
-      setError(loadError.message);
-      setBrand(null);
-    } else if (!data) {
-      setNotFound(true);
-      setBrand(null);
-    } else {
-      setBrand(data);
-      setNotFound(false);
+  const loadBrand = useCallback(async () => {
+    // Bei einem Hintergrund-Refresh (Tab-Wechsel) bleibt die bestehende
+    // Brand sichtbar, statt die ganze Seite auf "Lade Brand …"
+    // zurückzuwerfen.
+    if (!brandRef.current) {
+      setLoading(true);
     }
-    setLoading(false);
+    setError(null);
+
+    // Safety: Supabase-Queries können nach längerer Idle hängen
+    // (siehe lib/supabase/client.ts). Wir geben dem Lauf max. 12s.
+    const timeoutPromise = new Promise<"timeout">((resolve) =>
+      window.setTimeout(() => resolve("timeout"), 12000)
+    );
+    try {
+      const query = supabase
+        .from("brands")
+        .select("id, name, slug, logo_url, legal_name, organization_id")
+        .eq("slug", slug)
+        .maybeSingle();
+      const result = await Promise.race([query, timeoutPromise]);
+      if (result === "timeout") {
+        // Wenn schon eine Brand geladen war, einfach still bleiben –
+        // sonst Fehlermeldung anzeigen.
+        if (!brandRef.current) {
+          setError(
+            "Brand konnte nicht geladen werden (Timeout). Bitte aktualisiere die Seite."
+          );
+        }
+        return;
+      }
+      const { data, error: loadError } = result;
+      if (loadError) {
+        setError(loadError.message);
+        if (!brandRef.current) setBrand(null);
+      } else if (!data) {
+        setNotFound(true);
+        setBrand(null);
+      } else {
+        setBrand(data);
+        setNotFound(false);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[BrandDetail] loadBrand failed", err);
+      if (!brandRef.current) {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [slug]);
 
   useEffect(() => {
     loadBrand();
+  }, [loadBrand]);
+
+  // Beim Zurückkommen in den Tab still nachladen, damit nichts hängen
+  // bleibt, falls die Vorherige Query in einen Auth-Lock-Stall lief.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      loadBrand();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
   }, [loadBrand]);
 
   useEffect(() => {

@@ -197,16 +197,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     // Wenn der Tab nach längerer Idle-Zeit zurückkommt, ist das
     // Access-Token oft abgelaufen und supabase.auth.autoRefresh hat noch
-    // nicht angefasst. Wir stoßen den Refresh aktiv an, damit
-    // nachfolgende Queries (z.B. Brands) nicht ins Leere laufen.
+    // nicht angefasst (Browser-Throttling im Hintergrund). Wir stoßen
+    // den Refresh aktiv an, damit nachfolgende Queries (Brands etc.)
+    // nicht ins Leere laufen.
+    //
+    // getSession() / refreshSession() können in seltenen Fällen hängen
+    // (z.B. bei "Lock was stolen"-Race im supabase-Auth-Client). Wir
+    // setzen darum ein 4s-Timeout und nehmen sonst einfach die alte
+    // Session weiter, statt die UI zu blocken.
+    const withTimeout = <T,>(p: Promise<T>, ms = 4000): Promise<T | null> =>
+      Promise.race([
+        p,
+        new Promise<null>((resolve) =>
+          window.setTimeout(() => resolve(null), ms)
+        ),
+      ]);
+
     const handleVisible = async () => {
       if (typeof document === "undefined") return;
       if (document.visibilityState !== "visible") return;
       try {
-        const { data } = await supabase.auth.getSession();
+        // refreshSession bringt im Erfolgsfall ein frisches JWT, ohne den
+        // Auto-Refresh-Timer abwarten zu müssen. Bei Timeout/Fehler
+        // fallen wir auf die bestehende Session zurück.
+        await withTimeout(
+          supabase.auth.refreshSession().catch(() => null)
+        );
+        const sessionRes = await withTimeout(supabase.auth.getSession());
         if (cancelled) return;
-        setSession(data.session);
-        await loadProfileAndMemberships(data.session?.user ?? null);
+        const newSession = sessionRes?.data.session ?? null;
+        setSession(newSession);
+        await loadProfileAndMemberships(newSession?.user ?? null);
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error("[SessionProvider] visibility refresh failed", err);
