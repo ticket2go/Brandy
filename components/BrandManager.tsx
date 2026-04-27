@@ -13,6 +13,7 @@ import { slugify } from "@/lib/slugify";
 
 import BrandCard from "./BrandCard";
 import ConfirmDialog from "./ConfirmDialog";
+import { useSession } from "./SessionProvider";
 
 type Brand = {
   id: string;
@@ -20,6 +21,7 @@ type Brand = {
   slug: string;
   logo_url: string | null;
   legal_name: string | null;
+  organization_id: string | null;
   colors: string[];
 };
 
@@ -31,7 +33,9 @@ type BrandColorPreview = {
 };
 
 export default function BrandManager() {
+  const { user, activeOrg, loading: sessionLoading } = useSession();
   const [name, setName] = useState("");
+  const [legalName, setLegalName] = useState("");
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -45,11 +49,17 @@ export default function BrandManager() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const loadBrands = useCallback(async () => {
+    if (!user || !activeOrg) {
+      setBrands([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     const { data, error: loadError } = await supabase
       .from("brands")
-      .select("id, name, slug, logo_url, legal_name")
+      .select("id, name, slug, logo_url, legal_name, organization_id")
+      .eq("organization_id", activeOrg.id)
       .order("created_at", { ascending: true });
 
     if (loadError) {
@@ -109,7 +119,7 @@ export default function BrandManager() {
       }))
     );
     setLoading(false);
-  }, []);
+  }, [activeOrg, user]);
 
   useEffect(() => {
     loadBrands();
@@ -192,6 +202,7 @@ export default function BrandManager() {
       onComplete: () => {
         setFormOpen(false);
         setName("");
+        setLegalName("");
       },
     });
   };
@@ -207,10 +218,22 @@ export default function BrandManager() {
     const baseSlug = slugify(trimmed);
     const uniqueSlug = `${baseSlug}-${Date.now().toString(36)}`;
 
+    const insertPayload: {
+      name: string;
+      slug: string;
+      legal_name?: string | null;
+      organization_id?: string | null;
+      owner_id?: string | null;
+    } = { name: trimmed, slug: uniqueSlug };
+    const trimmedLegal = legalName.trim();
+    if (trimmedLegal) insertPayload.legal_name = trimmedLegal;
+    if (activeOrg) insertPayload.organization_id = activeOrg.id;
+    if (user) insertPayload.owner_id = user.id;
+
     const { data, error: insertError } = await supabase
       .from("brands")
-      .insert({ name: trimmed, slug: uniqueSlug })
-      .select("id, name, slug, logo_url, legal_name")
+      .insert(insertPayload)
+      .select("id, name, slug, logo_url, legal_name, organization_id")
       .single();
 
     if (insertError) {
@@ -245,32 +268,35 @@ export default function BrandManager() {
     setDeleting(false);
   };
 
-  const canSave = name.trim().length > 0 && !saving;
+  const canSave = name.trim().length > 0 && !!activeOrg && !saving;
+  const canCreate = !!user && !!activeOrg;
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setFormOpen(true)}
-        aria-label="Neue Brand anlegen"
-        title="Neue Brand anlegen"
-        className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
-      >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 20 20"
-          fill="none"
-          aria-hidden="true"
+      {canCreate && (
+        <button
+          type="button"
+          onClick={() => setFormOpen(true)}
+          aria-label="Neue Brand anlegen"
+          title="Neue Brand anlegen"
+          className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
         >
-          <path
-            d="M10 4v12M4 10h12"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-          />
-        </svg>
-      </button>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 20 20"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M10 4v12M4 10h12"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      )}
 
       <section
         id="brands"
@@ -285,24 +311,63 @@ export default function BrandManager() {
           </p>
         )}
 
-        {loading ? (
+        {sessionLoading ? (
+          <p className="text-sm text-black/50">Lade …</p>
+        ) : !user ? (
+          <div className="rounded-2xl border border-dashed border-black/15 bg-white p-8 text-sm text-black/60">
+            <p className="text-base font-semibold text-black">
+              Brands sind nur für eingeloggte Mitglieder sichtbar.
+            </p>
+            <p className="mt-1">
+              Bitte{" "}
+              <a
+                href="/login"
+                className="font-semibold text-black underline decoration-dotted underline-offset-4 hover:decoration-solid"
+              >
+                logge dich ein
+              </a>{" "}
+              oder{" "}
+              <a
+                href="/register"
+                className="font-semibold text-black underline decoration-dotted underline-offset-4 hover:decoration-solid"
+              >
+                registriere dich
+              </a>
+              , um die Brands deiner Organisation zu sehen.
+            </p>
+          </div>
+        ) : !activeOrg ? (
+          <div className="rounded-2xl border border-dashed border-black/15 bg-white p-8 text-sm text-black/60">
+            <p className="text-base font-semibold text-black">
+              Du gehörst noch keiner Organisation an.
+            </p>
+            <p className="mt-1">
+              Sobald ein Admin oder Verwalter dich einer Organisation
+              zuordnet, erscheinen hier die Brands deiner Orga.
+            </p>
+          </div>
+        ) : loading ? (
           <p className="text-sm text-black/50">Lade Brands …</p>
+        ) : brands.length > 0 ? (
+          <div className="flex flex-wrap gap-4">
+            {brands.map((brand) => (
+              <BrandCard
+                key={brand.id}
+                name={brand.name}
+                slug={brand.slug}
+                logoUrl={brand.logo_url}
+                colors={brand.colors}
+                legalName={brand.legal_name}
+                onDelete={() => setPendingDelete(brand)}
+              />
+            ))}
+          </div>
         ) : (
-          brands.length > 0 && (
-            <div className="flex flex-wrap gap-4">
-              {brands.map((brand) => (
-                <BrandCard
-                  key={brand.id}
-                  name={brand.name}
-                  slug={brand.slug}
-                  logoUrl={brand.logo_url}
-                  colors={brand.colors}
-                  legalName={brand.legal_name}
-                  onDelete={() => setPendingDelete(brand)}
-                />
-              ))}
-            </div>
-          )
+          <p className="text-sm text-black/50">
+            Noch keine Brands in <strong>B. {activeOrg.name}</strong>. Lege die
+            erste mit dem <kbd className="rounded bg-black/5 px-1 py-0.5 text-[11px]">+</kbd>{" "}
+            oben links an.
+          </p>
         )}
       </section>
 
@@ -329,18 +394,29 @@ export default function BrandManager() {
                 Brandname
               </label>
               <div className="flex items-end gap-6 border-b-2 border-white/70 px-2 pb-4">
-                <input
-                  ref={inputRef}
-                  id="brand-name-overlay"
-                  type="text"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Brandname …"
-                  disabled={saving}
-                  autoComplete="off"
-                  className="min-w-0 flex-1 border-0 bg-transparent font-semibold tracking-tight text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
-                  style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
-                />
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <input
+                    ref={inputRef}
+                    id="brand-name-overlay"
+                    type="text"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="Brandname …"
+                    disabled={saving}
+                    autoComplete="off"
+                    className="min-w-0 flex-1 border-0 bg-transparent font-semibold tracking-tight text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
+                    style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
+                  />
+                  <input
+                    type="text"
+                    value={legalName}
+                    onChange={(event) => setLegalName(event.target.value)}
+                    placeholder="Firmierung (optional, z.B. Max Mustermann GmbH)"
+                    disabled={saving}
+                    autoComplete="off"
+                    className="min-w-0 border-0 bg-transparent text-base text-white/70 placeholder:text-white/30 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
+                  />
+                </div>
                 <button
                   type="submit"
                   disabled={!canSave}
@@ -349,6 +425,17 @@ export default function BrandManager() {
                   {saving ? "Speichert …" : "Anlegen"}
                 </button>
               </div>
+              {activeOrg ? (
+                <p className="px-2 text-xs text-white/60">
+                  Brand wird in <strong className="text-white">B. {activeOrg.name}</strong>{" "}
+                  angelegt.
+                </p>
+              ) : !user ? (
+                <p className="px-2 text-xs text-white/60">
+                  Du bist nicht eingeloggt – die Brand wird ohne Organisation
+                  gespeichert.
+                </p>
+              ) : null}
               {error && (
                 <p
                   role="alert"

@@ -1,38 +1,40 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-const STORAGE_KEY = "bs.user.name";
-const DEFAULT_NAME = "Marcel";
+import { useSession } from "./SessionProvider";
+
+function capitalize(input: string): string {
+  if (!input) return input;
+  return input.charAt(0).toUpperCase() + input.slice(1);
+}
 
 export default function Greeting() {
-  const [name, setName] = useState<string>(DEFAULT_NAME);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<string>("");
+  const { user, profile, loading } = useSession();
   const [ready, setReady] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const wrapperRef = useRef<HTMLParagraphElement | null>(null);
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      if (stored && stored.trim().length > 0) {
-        setName(stored);
-      }
-    } catch {
-      // ignore
-    }
     setReady(true);
   }, []);
 
+  const profileName = useMemo(() => {
+    if (!user) return null;
+    const candidate = profile?.full_name?.trim() || profile?.username?.trim();
+    if (!candidate) return null;
+    if (
+      profile?.username &&
+      candidate.toLowerCase() === profile.username.toLowerCase() &&
+      candidate === candidate.toLowerCase()
+    ) {
+      return capitalize(candidate);
+    }
+    return candidate;
+  }, [user, profile]);
+
   useEffect(() => {
     if (!ready || !wrapperRef.current) return;
+    if (loading) return;
     let cancelled = false;
 
     (async () => {
@@ -54,48 +56,7 @@ export default function Greeting() {
     return () => {
       cancelled = true;
     };
-  }, [ready]);
-
-  useEffect(() => {
-    if (editing) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  }, [editing]);
-
-  const startEdit = () => {
-    setDraft(name);
-    setEditing(true);
-  };
-
-  const commit = () => {
-    const trimmed = draft.trim();
-    const next = trimmed.length > 0 ? trimmed : DEFAULT_NAME;
-    setName(next);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // ignore
-    }
-    setEditing(false);
-  };
-
-  const cancel = () => {
-    setDraft(name);
-    setEditing(false);
-  };
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    commit();
-  };
-
-  const handleKey = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      cancel();
-    }
-  };
+  }, [ready, loading, profileName]);
 
   return (
     <p
@@ -103,35 +64,15 @@ export default function Greeting() {
       className="m-0 text-lg text-black/70"
       style={{ opacity: 0 }}
     >
-      Hallo{" "}
-      {editing ? (
-        <form onSubmit={handleSubmit} className="inline">
-          <input
-            ref={inputRef}
-            type="text"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={handleKey}
-            aria-label="Dein Name"
-            placeholder={DEFAULT_NAME}
-            className="inline-block w-auto min-w-[4ch] max-w-[16ch] border-b border-black/30 bg-transparent px-0.5 font-semibold text-black outline-none focus:border-black"
-            style={{ width: `${Math.max(draft.length, 1) + 1}ch` }}
-            autoComplete="off"
-          />
-        </form>
+      {profileName ? (
+        <>
+          Hallo{" "}
+          <span className="font-semibold text-black">{profileName}</span>,
+          schön dass du da bist!
+        </>
       ) : (
-        <button
-          type="button"
-          onClick={startEdit}
-          aria-label="Namen bearbeiten"
-          title="Namen bearbeiten"
-          className="font-semibold text-black underline decoration-dotted decoration-black/30 underline-offset-4 transition hover:decoration-black"
-        >
-          {name}
-        </button>
+        <>Hallo, schön dass du da bist!</>
       )}
-      , schön dass du da bist!
     </p>
   );
 }

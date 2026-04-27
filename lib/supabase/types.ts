@@ -19,6 +19,7 @@ export interface Database {
           full_name: string | null;
           avatar_url: string | null;
           website: string | null;
+          is_admin: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -28,6 +29,7 @@ export interface Database {
           full_name?: string | null;
           avatar_url?: string | null;
           website?: string | null;
+          is_admin?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -37,6 +39,85 @@ export interface Database {
           full_name?: string | null;
           avatar_url?: string | null;
           website?: string | null;
+          is_admin?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      organizations: {
+        Row: {
+          id: string;
+          name: string;
+          legal_name: string;
+          slug: string;
+          logo_url: string | null;
+          manager_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          legal_name: string;
+          slug: string;
+          logo_url?: string | null;
+          manager_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          legal_name?: string;
+          slug?: string;
+          logo_url?: string | null;
+          manager_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      organization_members: {
+        Row: {
+          id: string;
+          organization_id: string;
+          user_id: string;
+          role:
+            | "manager"
+            | "grafik"
+            | "projektmanagement"
+            | "marketing"
+            | "geschaeftsfuehrung"
+            | "mitglied";
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          user_id: string;
+          role?:
+            | "manager"
+            | "grafik"
+            | "projektmanagement"
+            | "marketing"
+            | "geschaeftsfuehrung"
+            | "mitglied";
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          user_id?: string;
+          role?:
+            | "manager"
+            | "grafik"
+            | "projektmanagement"
+            | "marketing"
+            | "geschaeftsfuehrung"
+            | "mitglied";
           created_at?: string;
           updated_at?: string;
         };
@@ -46,6 +127,7 @@ export interface Database {
         Row: {
           id: string;
           owner_id: string | null;
+          organization_id: string | null;
           name: string;
           slug: string;
           description: string | null;
@@ -59,6 +141,7 @@ export interface Database {
         Insert: {
           id?: string;
           owner_id?: string | null;
+          organization_id?: string | null;
           name: string;
           slug: string;
           description?: string | null;
@@ -72,6 +155,7 @@ export interface Database {
         Update: {
           id?: string;
           owner_id?: string | null;
+          organization_id?: string | null;
           name?: string;
           slug?: string;
           description?: string | null;
