@@ -39,7 +39,8 @@ type TabKey =
   | "typografie"
   | "elemente"
   | "digital"
-  | "anwendungsbeispiele";
+  | "praesentation"
+  | "lokal";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "logokit", label: "Logokit" },
@@ -47,7 +48,8 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "typografie", label: "Typografie" },
   { key: "elemente", label: "Elemente" },
   { key: "digital", label: "Digital" },
-  { key: "anwendungsbeispiele", label: "Anwendungsbeispiele" },
+  { key: "praesentation", label: "Präsentation" },
+  { key: "lokal", label: "Lokal" },
 ];
 
 const STORAGE_BUCKET = "brand-assets";
@@ -70,6 +72,15 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [exportingIdml, setExportingIdml] = useState(false);
   const [idmlModalOpen, setIdmlModalOpen] = useState(false);
+  const [tabContent, setTabContent] = useState<Record<TabKey, boolean>>({
+    logokit: false,
+    farben: false,
+    typografie: false,
+    elemente: false,
+    digital: false,
+    praesentation: false,
+    lokal: false,
+  });
 
   const loadBrand = useCallback(async () => {
     setLoading(true);
@@ -96,6 +107,43 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
   useEffect(() => {
     loadBrand();
   }, [loadBrand]);
+
+  useEffect(() => {
+    if (!brand) return;
+    let cancelled = false;
+
+    const checkContent = async () => {
+      const [logosRes, colorsRes, fontsRes] = await Promise.all([
+        supabase
+          .from("brand_logos")
+          .select("id", { count: "exact", head: true })
+          .eq("brand_id", brand.id),
+        supabase
+          .from("brand_colors")
+          .select("id", { count: "exact", head: true })
+          .eq("brand_id", brand.id),
+        supabase
+          .from("brand_fonts")
+          .select("id", { count: "exact", head: true })
+          .eq("brand_id", brand.id),
+      ]);
+
+      if (cancelled) return;
+
+      setTabContent((prev) => ({
+        ...prev,
+        logokit: (logosRes.count ?? 0) > 0,
+        farben: (colorsRes.count ?? 0) > 0,
+        typografie: (fontsRes.count ?? 0) > 0,
+      }));
+    };
+
+    checkContent();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [brand, activeTab]);
 
   useEffect(() => {
     if (editingName && nameInputRef.current) {
@@ -662,12 +710,13 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
         <div role="tablist" className="flex flex-wrap gap-2">
           {TABS.map((tab) => {
             const isActive = tab.key === activeTab;
+            const hasContent = tabContent[tab.key];
             return (
               <button
                 key={tab.key}
                 type="button"
                 onClick={() => setActiveTab(tab.key)}
-                className={`-mb-px rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition ${
+                className={`-mb-px inline-flex items-center gap-1.5 rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition ${
                   isActive
                     ? "border-black text-black"
                     : "border-transparent text-black/50 hover:text-black"
@@ -675,7 +724,30 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
                 aria-selected={isActive}
                 role="tab"
               >
-                {tab.label}
+                <span>{tab.label}</span>
+                {hasContent && (
+                  <span
+                    aria-label="Inhalte vorhanden"
+                    title="Inhalte vorhanden"
+                    className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-green-500 text-white"
+                  >
+                    <svg
+                      width="9"
+                      height="9"
+                      viewBox="0 0 12 12"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M2.5 6.2L4.8 8.5L9.5 3.5"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </span>
+                )}
               </button>
             );
           })}
@@ -747,9 +819,10 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           )}
           {activeTab === "elemente" && <PlaceholderPanel title="Elemente" />}
           {activeTab === "digital" && <PlaceholderPanel title="Digital" />}
-          {activeTab === "anwendungsbeispiele" && (
-            <PlaceholderPanel title="Anwendungsbeispiele" />
+          {activeTab === "praesentation" && (
+            <PlaceholderPanel title="Präsentation" />
           )}
+          {activeTab === "lokal" && <PlaceholderPanel title="Lokal" />}
         </TabFade>
       </div>
 

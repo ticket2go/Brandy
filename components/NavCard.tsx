@@ -131,7 +131,7 @@ export default function NavCard() {
             className="text-[11px] font-medium tracking-tight text-white/80"
             style={{ opacity: open ? 0 : 1 }}
           >
-            BS.Feinrot
+            B. Feinrot
           </span>
         </div>
         <button

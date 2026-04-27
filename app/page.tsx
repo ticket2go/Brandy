@@ -8,7 +8,7 @@ export default function Home() {
     <main className="relative flex min-h-screen w-full flex-col items-stretch justify-start gap-12 py-16">
       <NavCard />
       <header className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-6">
-        <Title text="Brandsystem" />
+        <Title text="Brandy" />
         <Greeting />
       </header>
       <BrandManager />
