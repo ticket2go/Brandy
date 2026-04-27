@@ -695,7 +695,9 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
               ) : (
                 <>
                   <h1
-                    className="m-0 font-bold text-black"
+                    className={`m-0 font-bold text-black ${
+                      editMode ? "brand-jiggle" : ""
+                    }`}
                     style={{
                       fontSize: "clamp(2rem, 6vw, 4rem)",
                       letterSpacing: "-0.02em",
@@ -759,7 +761,9 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
                 ) : (
                   <>
                     <span
-                      className="truncate text-sm text-black/55"
+                      className={`truncate text-sm text-black/55 ${
+                        editMode ? "brand-jiggle-alt" : ""
+                      }`}
                       title={brand.legal_name ?? "Firmierung hinzufügen"}
                     >
                       {brand.legal_name && brand.legal_name.length > 0
@@ -806,7 +810,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
               className="hidden"
             />
             {logoSrc ? (
-              <div className="relative">
+              <div className={`relative ${editMode ? "brand-jiggle" : ""}`}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={logoSrc}
