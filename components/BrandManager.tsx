@@ -56,74 +56,124 @@ export default function BrandManager() {
     }
     setLoading(true);
     setError(null);
-    const { data, error: loadError } = await supabase
-      .from("brands")
-      .select("id, name, slug, logo_url, legal_name, organization_id")
-      .eq("organization_id", activeOrg.id)
-      .order("created_at", { ascending: true });
 
-    if (loadError) {
-      setError(loadError.message);
-      setBrands([]);
-      setLoading(false);
-      return;
-    }
+    // Safety-Timeout: wenn Supabase-Queries hängen (z.B. weil das
+    // Auth-Token nach Tab-Wechsel im Hintergrund verfällt und der
+    // Auto-Refresh verzögert ist), darf die UI nicht ewig in
+    // "Lade Brands …" hängen bleiben. Wir geben dem Lauf max. 12s
+    // und befreien das loading-Flag dann zwingend.
+    let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+    const safety = new Promise<"timeout">((resolve) => {
+      safetyTimer = setTimeout(() => resolve("timeout"), 12000);
+    });
 
-    const baseBrands = (data ?? []) as Array<Omit<Brand, "colors">>;
-    const brandIds = baseBrands.map((b) => b.id);
+    try {
+      const brandsQuery = supabase
+        .from("brands")
+        .select("id, name, slug, logo_url, legal_name, organization_id")
+        .eq("organization_id", activeOrg.id)
+        .order("created_at", { ascending: true });
 
-    let colorsByBrand = new Map<string, string[]>();
-    if (brandIds.length > 0) {
-      const { data: colorRows } = await supabase
-        .from("brand_colors")
-        .select("brand_id, hex, group, position")
-        .in("brand_id", brandIds)
-        .order("position", { ascending: true });
+      const result = await Promise.race([brandsQuery, safety]);
+      if (result === "timeout") {
+        setError(
+          "Brands konnten nicht geladen werden (Timeout). Bitte aktualisiere die Seite."
+        );
+        return;
+      }
 
-      if (colorRows) {
-        const rows = colorRows as BrandColorPreview[];
-        const preferredOrder: BrandColorPreview["group"][] = [
-          "print",
-          "digital",
-        ];
-        for (const brandId of brandIds) {
-          const brandRows = rows.filter((r) => r.brand_id === brandId);
-          let picked: BrandColorPreview[] = [];
-          for (const group of preferredOrder) {
-            const subset = brandRows
-              .filter((r) => r.group === group)
-              .sort((a, b) => a.position - b.position);
-            if (subset.length > 0) {
-              picked = subset;
-              break;
+      const { data, error: loadError } = result;
+      if (loadError) {
+        setError(loadError.message);
+        setBrands([]);
+        return;
+      }
+
+      const baseBrands = (data ?? []) as Array<Omit<Brand, "colors">>;
+      const brandIds = baseBrands.map((b) => b.id);
+
+      const colorsByBrand = new Map<string, string[]>();
+      if (brandIds.length > 0) {
+        const colorsQuery = supabase
+          .from("brand_colors")
+          .select("brand_id, hex, group, position")
+          .in("brand_id", brandIds)
+          .order("position", { ascending: true });
+        const colorsResult = await Promise.race([colorsQuery, safety]);
+        if (colorsResult !== "timeout") {
+          const colorRows = colorsResult.data;
+          if (colorRows) {
+            const rows = colorRows as BrandColorPreview[];
+            const preferredOrder: BrandColorPreview["group"][] = [
+              "print",
+              "digital",
+            ];
+            for (const brandId of brandIds) {
+              const brandRows = rows.filter((r) => r.brand_id === brandId);
+              let picked: BrandColorPreview[] = [];
+              for (const group of preferredOrder) {
+                const subset = brandRows
+                  .filter((r) => r.group === group)
+                  .sort((a, b) => a.position - b.position);
+                if (subset.length > 0) {
+                  picked = subset;
+                  break;
+                }
+              }
+              const seen = new Set<string>();
+              const hexes: string[] = [];
+              for (const row of picked) {
+                const normalized = row.hex.toUpperCase();
+                if (seen.has(normalized)) continue;
+                seen.add(normalized);
+                hexes.push(normalized);
+                if (hexes.length >= 3) break;
+              }
+              colorsByBrand.set(brandId, hexes);
             }
           }
-          const seen = new Set<string>();
-          const hexes: string[] = [];
-          for (const row of picked) {
-            const normalized = row.hex.toUpperCase();
-            if (seen.has(normalized)) continue;
-            seen.add(normalized);
-            hexes.push(normalized);
-            if (hexes.length >= 3) break;
-          }
-          colorsByBrand.set(brandId, hexes);
         }
       }
-    }
 
-    setBrands(
-      baseBrands.map((b) => ({
-        ...b,
-        colors: colorsByBrand.get(b.id) ?? [],
-      }))
-    );
-    setLoading(false);
+      setBrands(
+        baseBrands.map((b) => ({
+          ...b,
+          colors: colorsByBrand.get(b.id) ?? [],
+        }))
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[BrandManager] loadBrands failed", err);
+      setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+    } finally {
+      if (safetyTimer) clearTimeout(safetyTimer);
+      setLoading(false);
+    }
   }, [activeOrg, user]);
 
   useEffect(() => {
     loadBrands();
   }, [loadBrands]);
+
+  // Wenn der Tab nach längerer Zeit zurückkehrt, hängen Supabase-Calls
+  // gerne, weil das Access-Token zwischendurch abgelaufen ist und der
+  // Auto-Refresh erst beim nächsten Tick anspringt. Wir laden in dem Fall
+  // explizit neu, sobald die Seite wieder sichtbar ist – sonst bleibt
+  // "Lade Brands …" auch nach Tab-Wechsel + Refresh stehen.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handleVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!user || !activeOrg) return;
+      loadBrands();
+    };
+    document.addEventListener("visibilitychange", handleVisible);
+    window.addEventListener("focus", handleVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisible);
+      window.removeEventListener("focus", handleVisible);
+    };
+  }, [loadBrands, user, activeOrg]);
 
   useEffect(() => {
     if (!formOpen) return;

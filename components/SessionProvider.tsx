@@ -195,10 +195,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     );
 
+    // Wenn der Tab nach längerer Idle-Zeit zurückkommt, ist das
+    // Access-Token oft abgelaufen und supabase.auth.autoRefresh hat noch
+    // nicht angefasst. Wir stoßen den Refresh aktiv an, damit
+    // nachfolgende Queries (z.B. Brands) nicht ins Leere laufen.
+    const handleVisible = async () => {
+      if (typeof document === "undefined") return;
+      if (document.visibilityState !== "visible") return;
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (cancelled) return;
+        setSession(data.session);
+        await loadProfileAndMemberships(data.session?.user ?? null);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[SessionProvider] visibility refresh failed", err);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisible);
+    window.addEventListener("focus", handleVisible);
+
     return () => {
       cancelled = true;
       window.clearTimeout(safety);
       subscription.subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisible);
+      window.removeEventListener("focus", handleVisible);
     };
   }, [loadProfileAndMemberships]);
 
