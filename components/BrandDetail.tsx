@@ -26,6 +26,7 @@ import {
   WebExportsIcon,
 } from "./ExportIcons";
 import IdmlExportModal from "./IdmlExportModal";
+import { useSession } from "./SessionProvider";
 
 type Brand = {
   id: string;
@@ -33,6 +34,7 @@ type Brand = {
   slug: string;
   logo_url: string | null;
   legal_name: string | null;
+  organization_id: string | null;
 };
 
 type TabKey =
@@ -61,6 +63,7 @@ type BrandDetailProps = {
 };
 
 export default function BrandDetail({ slug }: BrandDetailProps) {
+  const { user, profile, memberships } = useSession();
   const [brand, setBrand] = useState<Brand | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -94,7 +97,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     setError(null);
     const { data, error: loadError } = await supabase
       .from("brands")
-      .select("id, name, slug, logo_url, legal_name")
+      .select("id, name, slug, logo_url, legal_name, organization_id")
       .eq("slug", slug)
       .maybeSingle();
 
@@ -196,7 +199,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
       .from("brands")
       .update({ name: trimmed })
       .eq("id", brand.id)
-      .select("id, name, slug, logo_url, legal_name")
+      .select("id, name, slug, logo_url, legal_name, organization_id")
       .single();
     if (updateError) {
       setError(updateError.message);
@@ -235,7 +238,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
       .from("brands")
       .update({ legal_name: trimmed.length > 0 ? trimmed : null })
       .eq("id", brand.id)
-      .select("id, name, slug, logo_url, legal_name")
+      .select("id, name, slug, logo_url, legal_name, organization_id")
       .single();
     if (updateError) {
       setError(updateError.message);
@@ -617,6 +620,17 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     );
   }
 
+  // Bearbeiten erlaubt: Admin global, oder Brand ohne Organisation
+  // (Legacy-Brands aus der anonymen Phase), oder Mitglied/Manager der
+  // Organisation, der die Brand zugeordnet ist.
+  const canEdit =
+    !!user &&
+    (profile?.is_admin === true ||
+      brand.organization_id === null ||
+      memberships.some(
+        (m) => m.organization_id === brand.organization_id
+      ));
+
   return (
     <section className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6">
       <header className="flex flex-col gap-4">
@@ -626,43 +640,46 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           </Link>
           <span>/</span>
           <span className="text-black/70">{brand.name}</span>
-          <button
-            type="button"
-            onClick={() => {
-              setEditMode((prev) => {
-                const next = !prev;
-                if (!next) {
-                  if (editingName && !savingName) cancelEditName();
-                  if (editingLegalName && !savingLegalName) cancelEditLegalName();
-                }
-                return next;
-              });
-            }}
-            aria-pressed={editMode}
-            aria-label={editMode ? "Bearbeiten beenden" : "Brand bearbeiten"}
-            title={editMode ? "Bearbeiten beenden" : "Brand bearbeiten"}
-            className={`ml-auto flex h-6 w-6 items-center justify-center rounded-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20 ${
-              editMode
-                ? "bg-black text-white hover:bg-black/85"
-                : "text-black/30 hover:bg-black/5 hover:text-black/70"
-            }`}
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 14 14"
-              fill="none"
-              aria-hidden="true"
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditMode((prev) => {
+                  const next = !prev;
+                  if (!next) {
+                    if (editingName && !savingName) cancelEditName();
+                    if (editingLegalName && !savingLegalName)
+                      cancelEditLegalName();
+                  }
+                  return next;
+                });
+              }}
+              aria-pressed={editMode}
+              aria-label={editMode ? "Bearbeiten beenden" : "Brand bearbeiten"}
+              title={editMode ? "Bearbeiten beenden" : "Brand bearbeiten"}
+              className={`ml-auto flex h-7 w-7 items-center justify-center rounded-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-black/20 ${
+                editMode
+                  ? "bg-black text-white hover:bg-black/85"
+                  : "text-black/60 hover:bg-black/10 hover:text-black"
+              }`}
             >
-              <path
-                d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
-                stroke="currentColor"
-                strokeWidth="1.25"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 14 14"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M9.5 2.2l2.3 2.3M2.5 11.5L3 9l6.5-6.5a1.2 1.2 0 0 1 1.7 0l.3.3a1.2 1.2 0 0 1 0 1.7L5 11l-2.5.5z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
         </nav>
         <div className="flex items-end justify-between gap-6">
           <div className="flex min-w-0 flex-col gap-1">
