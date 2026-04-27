@@ -1,8 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 
 import { supabase } from "@/lib/supabase/client";
+import { useVisibilityReload } from "@/lib/useVisibilityReload";
 
 import ConfirmDialog from "./ConfirmDialog";
 import Modal from "./Modal";
@@ -36,8 +43,12 @@ export default function LokalPanel({ brandId, onCountChange }: LokalPanelProps) 
     [onCountChange]
   );
 
+  const hasDataRef = useRef(false);
+
   const loadEntries = useCallback(async () => {
-    setLoading(true);
+    if (!hasDataRef.current) {
+      setLoading(true);
+    }
     setError(null);
     const { data, error: loadError } = await supabase
       .from("brand_local_entries")
@@ -47,10 +58,13 @@ export default function LokalPanel({ brandId, onCountChange }: LokalPanelProps) 
       .order("created_at", { ascending: true });
 
     if (loadError) {
-      setError(loadError.message);
-      setEntries([]);
-      reportCount(0);
+      if (!hasDataRef.current) {
+        setError(loadError.message);
+        setEntries([]);
+        reportCount(0);
+      }
     } else {
+      hasDataRef.current = true;
       const rows = (data ?? []) as LocalEntry[];
       setEntries(rows);
       reportCount(rows.length);
@@ -61,6 +75,8 @@ export default function LokalPanel({ brandId, onCountChange }: LokalPanelProps) 
   useEffect(() => {
     loadEntries();
   }, [loadEntries]);
+
+  useVisibilityReload(loadEntries);
 
   const handleCreate = useCallback(
     async (content: string) => {

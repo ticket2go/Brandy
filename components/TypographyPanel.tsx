@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 
 import { supabase } from "@/lib/supabase/client";
 import { cssFormatName, formatLabel, mimeTypeForFormat } from "@/lib/fontFormat";
+import { useVisibilityReload } from "@/lib/useVisibilityReload";
 
 import AddFontModal, { type AddFontSubmit } from "./AddFontModal";
 import ConfirmDialog from "./ConfirmDialog";
@@ -112,8 +113,12 @@ export default function TypographyPanel({
     });
   };
 
+  const hasDataRef = useRef(false);
+
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!hasDataRef.current) {
+      setLoading(true);
+    }
     setError(null);
     const [fontsRes, filesRes] = await Promise.all([
       supabase
@@ -132,10 +137,11 @@ export default function TypographyPanel({
     ]);
 
     if (fontsRes.error) {
-      setError(fontsRes.error.message);
+      if (!hasDataRef.current) setError(fontsRes.error.message);
     } else if (filesRes.error) {
-      setError(filesRes.error.message);
+      if (!hasDataRef.current) setError(filesRes.error.message);
     } else {
+      hasDataRef.current = true;
       const fontRows = ((fontsRes.data ?? []) as BrandFont[]).map((f) => ({
         ...f,
         roles: Array.isArray(f.roles) ? f.roles : [],
@@ -154,6 +160,8 @@ export default function TypographyPanel({
   useEffect(() => {
     load();
   }, [load]);
+
+  useVisibilityReload(load);
 
   const filesByFont = useMemo(() => {
     const map = new Map<string, BrandFontFile[]>();

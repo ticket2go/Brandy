@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 
 import { supabase } from "@/lib/supabase/client";
+import { useVisibilityReload } from "@/lib/useVisibilityReload";
 import {
   LOGO_COLOR_SPACE_LABELS,
   LOGO_FORMATS,
@@ -78,8 +79,12 @@ export default function LogokitPanel({
     useState<ColorSpaceFilter>("all");
   const [formatFilter, setFormatFilter] = useState<FormatFilter>("all");
 
+  const hasDataRef = useRef(false);
+
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!hasDataRef.current) {
+      setLoading(true);
+    }
     setError(null);
     const { data, error: loadError } = await supabase
       .from("brand_logos")
@@ -90,9 +95,12 @@ export default function LogokitPanel({
       .order("position", { ascending: true })
       .order("created_at", { ascending: true });
     if (loadError) {
-      setError(loadError.message);
-      setLogos([]);
+      if (!hasDataRef.current) {
+        setError(loadError.message);
+        setLogos([]);
+      }
     } else {
+      hasDataRef.current = true;
       setLogos((data ?? []) as BrandLogo[]);
     }
     setLoading(false);
@@ -101,6 +109,8 @@ export default function LogokitPanel({
   useEffect(() => {
     load();
   }, [load]);
+
+  useVisibilityReload(load);
 
   const handleSubmitAdd = async (payload: AddLogoSubmit) => {
     const startPosition =

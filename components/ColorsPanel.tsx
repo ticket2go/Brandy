@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { supabase } from "@/lib/supabase/client";
+import { useVisibilityReload } from "@/lib/useVisibilityReload";
 
 import {
   formatCmyk,
@@ -106,8 +107,15 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
 
   const overlayRef = useRef<HTMLDivElement | null>(null);
 
+  const hasDataRef = useRef(false);
+
   const load = useCallback(async () => {
-    setLoading(true);
+    // Stale-While-Revalidate: bei Hintergrund-Refreshes (Tab-Wechsel)
+    // bleibt das bestehende UI sichtbar, statt auf "Lade Farben …"
+    // zurückzufallen.
+    if (!hasDataRef.current) {
+      setLoading(true);
+    }
     setError(null);
     const [catsRes, colorsRes, valuesRes] = await Promise.all([
       supabase
@@ -128,12 +136,13 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
     ]);
 
     if (catsRes.error) {
-      setError(catsRes.error.message);
+      if (!hasDataRef.current) setError(catsRes.error.message);
     } else if (colorsRes.error) {
-      setError(colorsRes.error.message);
+      if (!hasDataRef.current) setError(colorsRes.error.message);
     } else if (valuesRes.error) {
-      setError(valuesRes.error.message);
+      if (!hasDataRef.current) setError(valuesRes.error.message);
     } else {
+      hasDataRef.current = true;
       const cats = (catsRes.data ?? []) as Category[];
       setCategories(cats);
       setColors((colorsRes.data ?? []) as Color[]);
@@ -164,6 +173,8 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
   useEffect(() => {
     load();
   }, [load]);
+
+  useVisibilityReload(load);
 
   useEffect(() => {
     let cancelled = false;
