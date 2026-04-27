@@ -10,3 +10,39 @@ body {
   width: 100%;
   background-color: #ffffff;
 }
+
+/*
+ * iPhone-Homescreen-artiges "Wackeln" fuer bearbeitbare Elemente
+ * im Brand-Edit-Modus. Zwei minimal unterschiedliche Keyframes,
+ * damit sich nicht alle Elemente synchron bewegen.
+ */
+@keyframes brand-jiggle-a {
+  0%   { transform: rotate(-0.8deg) translate(0, 0); }
+  50%  { transform: rotate(0.8deg)  translate(0, -0.5px); }
+  100% { transform: rotate(-0.8deg) translate(0, 0); }
+}
+
+@keyframes brand-jiggle-b {
+  0%   { transform: rotate(0.7deg)  translate(0, 0); }
+  50%  { transform: rotate(-0.7deg) translate(0, 0.5px); }
+  100% { transform: rotate(0.7deg)  translate(0, 0); }
+}
+
+.brand-jiggle {
+  transform-origin: center;
+  animation: brand-jiggle-a 0.18s ease-in-out infinite;
+  will-change: transform;
+}
+
+.brand-jiggle-alt {
+  transform-origin: center;
+  animation: brand-jiggle-b 0.2s ease-in-out infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-jiggle,
+  .brand-jiggle-alt {
+    animation: none;
+  }
+}
