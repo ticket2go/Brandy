@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -69,6 +70,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [memberships, setMemberships] = useState<MembershipWithOrg[]>([]);
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
+  const signOutInFlightRef = useRef(false);
 
   const loadProfileAndMemberships = useCallback(async (user: User | null) => {
     if (!user) {
@@ -182,12 +184,49 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     })();
 
+    // Internal signOut tracking: nur bei einem vom User initiierten
+    // Logout (siehe signOut() unten) wollen wir das nachfolgende
+    // SIGNED_OUT-Event als echten Logout behandeln. Die supabase-js
+    // Lib feuert `SIGNED_OUT` aber auch dann, wenn ein Refresh-Token
+    // im Hintergrund mit einem (transienten) Fehler antwortet – z.B.
+    // wenn ein Lock nach Tab-Idle gestohlen wurde. Diesen "False
+    // Positive" wollen wir ignorieren.
     const { data: subscription } = supabase.auth.onAuthStateChange(
-      async (_event, newSession) => {
+      async (event, newSession) => {
         if (cancelled) return;
+
+        if (event === "SIGNED_OUT") {
+          if (signOutInFlightRef.current) {
+            setSession(null);
+            await loadProfileAndMemberships(null);
+            return;
+          }
+          // Kein vom User initiierter Logout: prüfen, ob im
+          // Storage wirklich keine Session mehr liegt. Wenn doch,
+          // war es ein transienter Auth-Fehler und wir behalten die
+          // alte Session.
+          try {
+            const { data } = await supabase.auth.getSession();
+            if (cancelled) return;
+            if (data.session) {
+              setSession(data.session);
+              await loadProfileAndMemberships(data.session.user);
+              return;
+            }
+          } catch {
+            // Wenn getSession() nicht antwortet, bleibt die alte
+            // Session aktiv – kein Hard-Logout.
+            return;
+          }
+          setSession(null);
+          await loadProfileAndMemberships(null);
+          return;
+        }
+
+        if (!newSession) return;
         setSession(newSession);
         try {
-          await loadProfileAndMemberships(newSession?.user ?? null);
+          await loadProfileAndMemberships(newSession.user ?? null);
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error("[SessionProvider] auth change failed", err);
@@ -195,40 +234,29 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    // Wenn der Tab nach längerer Idle-Zeit zurückkommt, ist das
-    // Access-Token oft abgelaufen und supabase.auth.autoRefresh hat noch
-    // nicht angefasst (Browser-Throttling im Hintergrund). Wir stoßen
-    // den Refresh aktiv an, damit nachfolgende Queries (Brands etc.)
-    // nicht ins Leere laufen.
-    //
-    // getSession() / refreshSession() können in seltenen Fällen hängen
-    // (z.B. bei "Lock was stolen"-Race im supabase-Auth-Client). Wir
-    // setzen darum ein 4s-Timeout und nehmen sonst einfach die alte
-    // Session weiter, statt die UI zu blocken.
-    const withTimeout = <T,>(p: Promise<T>, ms = 4000): Promise<T | null> =>
-      Promise.race([
-        p,
-        new Promise<null>((resolve) =>
-          window.setTimeout(() => resolve(null), ms)
-        ),
-      ]);
-
+    // Beim Zurückkommen in den Tab kann der eingebaute Auto-Refresh
+    // hängen (Browser-Throttling im Hintergrund + Auth-Client-Locks).
+    // Wir lesen daher selbst noch einmal die Session aus dem Storage –
+    // mit hartem 3s-Timeout. Wichtig: bei Timeout / leerem Ergebnis
+    // setzen wir die Session NICHT auf null. Lieber die alte Session
+    // weiterverwenden, als den User aus Versehen "auszuloggen".
     const handleVisible = async () => {
       if (typeof document === "undefined") return;
       if (document.visibilityState !== "visible") return;
       try {
-        // refreshSession bringt im Erfolgsfall ein frisches JWT, ohne den
-        // Auto-Refresh-Timer abwarten zu müssen. Bei Timeout/Fehler
-        // fallen wir auf die bestehende Session zurück.
-        await withTimeout(
-          supabase.auth.refreshSession().catch(() => null)
-        );
-        const sessionRes = await withTimeout(supabase.auth.getSession());
+        const result = await Promise.race<{
+          data: { session: Session | null };
+        } | null>([
+          supabase.auth.getSession(),
+          new Promise((resolve) => window.setTimeout(() => resolve(null), 3000)),
+        ]);
         if (cancelled) return;
-        const newSession = sessionRes?.data.session ?? null;
-        setSession(newSession);
-        await loadProfileAndMemberships(newSession?.user ?? null);
+        const fetched = result?.data?.session ?? null;
+        if (!fetched) return;
+        setSession(fetched);
+        await loadProfileAndMemberships(fetched.user);
       } catch (err) {
+        // Hängender Lock o.ä. – einfach still die alte Session behalten.
         // eslint-disable-next-line no-console
         console.error("[SessionProvider] visibility refresh failed", err);
       }
@@ -284,6 +312,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    // Markiert das nachfolgende SIGNED_OUT-Event als echten Logout,
+    // damit der onAuthStateChange-Handler ihn nicht als
+    // transient-Auth-Fehler ignoriert.
+    signOutInFlightRef.current = true;
+
     // Lokalen State zuerst leeren, damit die UI auch dann sauber
     // umschaltet, wenn supabase.auth.signOut() langsam ist oder hängt.
     setSession(null);
