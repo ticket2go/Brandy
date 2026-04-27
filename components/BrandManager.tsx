@@ -48,13 +48,23 @@ export default function BrandManager() {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  const brandsRef = useRef<Brand[]>([]);
+  useEffect(() => {
+    brandsRef.current = brands;
+  }, [brands]);
+
   const loadBrands = useCallback(async () => {
     if (!user || !activeOrg) {
       setBrands([]);
       setLoading(false);
       return;
     }
-    setLoading(true);
+    // Wenn schon Brands sichtbar sind (z.B. weil der Tab nur kurz im
+    // Hintergrund war), tauschen wir sie im Hintergrund aus statt das
+    // ganze UI auf "Lade Brands …" zurückzusetzen.
+    if (brandsRef.current.length === 0) {
+      setLoading(true);
+    }
     setError(null);
 
     // Safety-Timeout: wenn Supabase-Queries hängen (z.B. weil das
