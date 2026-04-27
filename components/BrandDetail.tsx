@@ -17,6 +17,7 @@ import {
 import BrandRoles from "./BrandRoles";
 import ColorsPanel from "./ColorsPanel";
 import LogokitPanel from "./LogokitPanel";
+import LokalPanel from "./LokalPanel";
 import TypographyPanel from "./TypographyPanel";
 import {
   CreativeCloudIcon,
@@ -113,7 +114,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     let cancelled = false;
 
     const checkContent = async () => {
-      const [logosRes, colorsRes, fontsRes] = await Promise.all([
+      const [logosRes, colorsRes, fontsRes, localRes] = await Promise.all([
         supabase
           .from("brand_logos")
           .select("id", { count: "exact", head: true })
@@ -126,6 +127,10 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           .from("brand_fonts")
           .select("id", { count: "exact", head: true })
           .eq("brand_id", brand.id),
+        supabase
+          .from("brand_local_entries")
+          .select("id", { count: "exact", head: true })
+          .eq("brand_id", brand.id),
       ]);
 
       if (cancelled) return;
@@ -135,6 +140,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
         logokit: (logosRes.count ?? 0) > 0,
         farben: (colorsRes.count ?? 0) > 0,
         typografie: (fontsRes.count ?? 0) > 0,
+        lokal: (localRes.count ?? 0) > 0,
       }));
     };
 
@@ -822,7 +828,17 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           {activeTab === "praesentation" && (
             <PlaceholderPanel title="Präsentation" />
           )}
-          {activeTab === "lokal" && <PlaceholderPanel title="Lokal" />}
+          {activeTab === "lokal" && (
+            <LokalPanel
+              brandId={brand.id}
+              onCountChange={(count) => {
+                const has = count > 0;
+                setTabContent((prev) =>
+                  prev.lokal === has ? prev : { ...prev, lokal: has }
+                );
+              }}
+            />
+          )}
         </TabFade>
       </div>
 
