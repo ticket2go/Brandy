@@ -85,12 +85,16 @@ Organisationen erweitert:
   Role automatisch der Account `admin` / `admin` mit
   `profiles.is_admin = true` angelegt, falls er noch nicht existiert.
 - **Admin-Panel** (`/admin`): Sichtbar nur für Admins. Über das `+` lassen
-  sich Organisationen mit *Name*, *Firmierung* und *Verwalter* anlegen
-  sowie Logos hochladen (`org-assets` Storage-Bucket).
-- **Mitglieder & Rollen**: `/admin/organizations/[id]` (auch für den
-  Verwalter sichtbar) ermöglicht das Hinzufügen von Mitgliedern und
+  sich Organisationen mit *Name*, *Firmierung* und einem oder mehreren
+  *Verwalter:innen* anlegen sowie Logos hochladen (`org-assets` Storage-
+  Bucket). Die Verwalter-Auswahl bietet eine dynamische Username-Suche.
+- **Mitglieder & Rollen**: `/admin/organizations/[id]` (auch für die
+  Verwalter:innen sichtbar) ermöglicht das Hinzufügen von Mitgliedern und
   Rollenpflege (`grafik`, `projektmanagement`, `marketing`,
-  `geschaeftsfuehrung`, `mitglied`, `manager`).
+  `geschaeftsfuehrung`, `mitglied`, `manager`). Verwalter:innen können
+  hier auch **Name**, **Firmierung** und **Logo** der Organisation
+  anpassen (Migration `0014_org_multi_manager.sql`). Schriften und
+  weitere Logos für die kommenden Präsentations-Vorlagen folgen separat.
 - **Brand → Organisation**: Brands werden mit der gerade aktiven Organisation
   verknüpft (`brands.organization_id`). Die NavCard rechts oben zeigt
   „B. <Org-Name>“ und – bei mehreren Mitgliedschaften – einen Wechsler.
