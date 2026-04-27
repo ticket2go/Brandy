@@ -49,6 +49,7 @@ export interface Database {
           name: string;
           slug: string;
           description: string | null;
+          legal_name: string | null;
           primary_color: string | null;
           secondary_color: string | null;
           logo_url: string | null;
@@ -61,6 +62,7 @@ export interface Database {
           name: string;
           slug: string;
           description?: string | null;
+          legal_name?: string | null;
           primary_color?: string | null;
           secondary_color?: string | null;
           logo_url?: string | null;
@@ -73,6 +75,7 @@ export interface Database {
           name?: string;
           slug?: string;
           description?: string | null;
+          legal_name?: string | null;
           primary_color?: string | null;
           secondary_color?: string | null;
           logo_url?: string | null;
