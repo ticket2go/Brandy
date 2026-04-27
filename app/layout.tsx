@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Epilogue } from "next/font/google";
 
+import { SessionProvider } from "@/components/SessionProvider";
+
 import "./globals.css";
 
 const epilogue = Epilogue({
@@ -22,7 +24,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="de" className={epilogue.variable}>
-      <body className="font-sans">{children}</body>
+      <body className="font-sans">
+        <SessionProvider>{children}</SessionProvider>
+      </body>
     </html>
   );
 }

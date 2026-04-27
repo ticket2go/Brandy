@@ -72,3 +72,29 @@ Projekt-URL: `https://cxymzwhucypdsqccfgtl.supabase.co`
 
    const { data, error } = await supabase.from("brands").select("*");
    ```
+
+## Auth, Organisationen & Admin-Panel
+
+Mit Migration `0012_organizations.sql` wird das System um Auth-basierte
+Organisationen erweitert:
+
+- **Login/Registrierung**: `/login` und `/register`. User registrieren sich
+  mit Benutzernamen + Passwort; intern wird daraus eine Pseudo-E-Mail
+  `<username>@brandsystem.local` gebildet.
+- **Bootstrap-Admin**: Beim ersten Aufruf der Login-Seite wird per Service
+  Role automatisch der Account `admin` / `admin` mit
+  `profiles.is_admin = true` angelegt, falls er noch nicht existiert.
+- **Admin-Panel** (`/admin`): Sichtbar nur für Admins. Über das `+` lassen
+  sich Organisationen mit *Name*, *Firmierung* und *Verwalter* anlegen
+  sowie Logos hochladen (`org-assets` Storage-Bucket).
+- **Mitglieder & Rollen**: `/admin/organizations/[id]` (auch für den
+  Verwalter sichtbar) ermöglicht das Hinzufügen von Mitgliedern und
+  Rollenpflege (`grafik`, `projektmanagement`, `marketing`,
+  `geschaeftsfuehrung`, `mitglied`, `manager`).
+- **Brand → Organisation**: Brands werden mit der gerade aktiven Organisation
+  verknüpft (`brands.organization_id`). Die NavCard rechts oben zeigt
+  „B. <Org-Name>“ und – bei mehreren Mitgliedschaften – einen Wechsler.
+
+Voraussetzung: `SUPABASE_SERVICE_ROLE_KEY` muss serverseitig gesetzt sein
+(z.B. in `.env.local`), damit Auth-User per `supabase.auth.admin` angelegt
+und Admin-Aktionen RLS-frei ausgeführt werden können.

@@ -13,6 +13,7 @@ import { slugify } from "@/lib/slugify";
 
 import BrandCard from "./BrandCard";
 import ConfirmDialog from "./ConfirmDialog";
+import { useSession } from "./SessionProvider";
 
 type Brand = {
   id: string;
@@ -20,6 +21,7 @@ type Brand = {
   slug: string;
   logo_url: string | null;
   legal_name: string | null;
+  organization_id: string | null;
   colors: string[];
 };
 
@@ -31,7 +33,9 @@ type BrandColorPreview = {
 };
 
 export default function BrandManager() {
+  const { user, activeOrg } = useSession();
   const [name, setName] = useState("");
+  const [legalName, setLegalName] = useState("");
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -47,10 +51,17 @@ export default function BrandManager() {
   const loadBrands = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data, error: loadError } = await supabase
+    let query = supabase
       .from("brands")
-      .select("id, name, slug, logo_url, legal_name")
+      .select("id, name, slug, logo_url, legal_name, organization_id")
       .order("created_at", { ascending: true });
+
+    if (activeOrg) {
+      query = query.eq("organization_id", activeOrg.id);
+    } else if (user) {
+      query = query.is("organization_id", null);
+    }
+    const { data, error: loadError } = await query;
 
     if (loadError) {
       setError(loadError.message);
@@ -109,7 +120,7 @@ export default function BrandManager() {
       }))
     );
     setLoading(false);
-  }, []);
+  }, [activeOrg, user]);
 
   useEffect(() => {
     loadBrands();
@@ -192,6 +203,7 @@ export default function BrandManager() {
       onComplete: () => {
         setFormOpen(false);
         setName("");
+        setLegalName("");
       },
     });
   };
@@ -207,10 +219,22 @@ export default function BrandManager() {
     const baseSlug = slugify(trimmed);
     const uniqueSlug = `${baseSlug}-${Date.now().toString(36)}`;
 
+    const insertPayload: {
+      name: string;
+      slug: string;
+      legal_name?: string | null;
+      organization_id?: string | null;
+      owner_id?: string | null;
+    } = { name: trimmed, slug: uniqueSlug };
+    const trimmedLegal = legalName.trim();
+    if (trimmedLegal) insertPayload.legal_name = trimmedLegal;
+    if (activeOrg) insertPayload.organization_id = activeOrg.id;
+    if (user) insertPayload.owner_id = user.id;
+
     const { data, error: insertError } = await supabase
       .from("brands")
-      .insert({ name: trimmed, slug: uniqueSlug })
-      .select("id, name, slug, logo_url, legal_name")
+      .insert(insertPayload)
+      .select("id, name, slug, logo_url, legal_name, organization_id")
       .single();
 
     if (insertError) {
@@ -329,18 +353,29 @@ export default function BrandManager() {
                 Brandname
               </label>
               <div className="flex items-end gap-6 border-b-2 border-white/70 px-2 pb-4">
-                <input
-                  ref={inputRef}
-                  id="brand-name-overlay"
-                  type="text"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Brandname …"
-                  disabled={saving}
-                  autoComplete="off"
-                  className="min-w-0 flex-1 border-0 bg-transparent font-semibold tracking-tight text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
-                  style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
-                />
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <input
+                    ref={inputRef}
+                    id="brand-name-overlay"
+                    type="text"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="Brandname …"
+                    disabled={saving}
+                    autoComplete="off"
+                    className="min-w-0 flex-1 border-0 bg-transparent font-semibold tracking-tight text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
+                    style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
+                  />
+                  <input
+                    type="text"
+                    value={legalName}
+                    onChange={(event) => setLegalName(event.target.value)}
+                    placeholder="Firmierung (optional, z.B. Max Mustermann GmbH)"
+                    disabled={saving}
+                    autoComplete="off"
+                    className="min-w-0 border-0 bg-transparent text-base text-white/70 placeholder:text-white/30 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
+                  />
+                </div>
                 <button
                   type="submit"
                   disabled={!canSave}
@@ -349,6 +384,17 @@ export default function BrandManager() {
                   {saving ? "Speichert …" : "Anlegen"}
                 </button>
               </div>
+              {activeOrg ? (
+                <p className="px-2 text-xs text-white/60">
+                  Brand wird in <strong className="text-white">B. {activeOrg.name}</strong>{" "}
+                  angelegt.
+                </p>
+              ) : !user ? (
+                <p className="px-2 text-xs text-white/60">
+                  Du bist nicht eingeloggt – die Brand wird ohne Organisation
+                  gespeichert.
+                </p>
+              ) : null}
               {error && (
                 <p
                   role="alert"
