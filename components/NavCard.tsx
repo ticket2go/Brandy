@@ -122,10 +122,11 @@ export default function NavCard() {
   }, [open]);
 
   const orgLabel = useMemo(() => {
-    if (activeOrg) return `B. ${activeOrg.name}`;
-    if (profile?.is_admin) return "B. Admin";
-    return "B. Feinrot";
-  }, [activeOrg, profile]);
+    if (!user) return "Brandy";
+    if (activeOrg) return `B.${activeOrg.name}`;
+    if (profile?.is_admin) return "B.Admin";
+    return "Brandy";
+  }, [user, activeOrg, profile]);
 
   const resourceItems: NavItem[] = useMemo(() => {
     const items: NavItem[] = [{ label: "Account", href: "/account" }];
@@ -161,8 +162,10 @@ export default function NavCard() {
         <div className="flex min-w-0 items-center gap-2">
           <span
             aria-hidden
-            className="h-2 w-2 shrink-0 rounded-full bg-white"
-            title="Verfügbar"
+            className={`h-2 w-2 shrink-0 rounded-full ${
+              user ? "bg-emerald-400" : "bg-white"
+            }`}
+            title={user ? "Eingeloggt" : "Verfügbar"}
           />
           <span
             ref={labelRef}
@@ -200,7 +203,7 @@ export default function NavCard() {
                 className="mt-0.5 truncate text-[13px] font-semibold text-white"
                 title={activeOrg.name}
               >
-                B. {activeOrg.name}
+                B.{activeOrg.name}
               </p>
               {memberships.length > 1 && (
                 <select
