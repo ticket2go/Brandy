@@ -241,11 +241,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    // Lokalen State zuerst leeren, damit die UI auch dann sauber
+    // umschaltet, wenn supabase.auth.signOut() langsam ist oder hängt.
     setSession(null);
     setProfile(null);
     setMemberships([]);
     setActiveOrg(null);
+
+    // Persistenten Auth-Cache aus dem localStorage räumen, falls der
+    // signOut-Call hängen bleibt – sonst wäre der User beim nächsten
+    // Reload wieder eingeloggt.
+    try {
+      for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        const key = window.localStorage.key(i);
+        if (
+          key &&
+          (key.startsWith("sb-") ||
+            key.startsWith("supabase.auth.") ||
+            key === "supabase.auth.token")
+        ) {
+          window.localStorage.removeItem(key);
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // Den eigentlichen Server-Signout gegen ein 3s-Timeout rennen lassen.
+    await Promise.race([
+      supabase.auth.signOut().catch(() => undefined),
+      new Promise<void>((resolve) => window.setTimeout(resolve, 3000)),
+    ]);
   }, [setActiveOrg]);
 
   const activeMembership = useMemo(

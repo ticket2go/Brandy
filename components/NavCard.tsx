@@ -141,9 +141,14 @@ export default function NavCard() {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("[NavCard] signOut failed", err);
-    } finally {
+    }
+    // Harter Reload nach /login – das ist robust gegen festgefahrene
+    // Router-States und stellt sicher, dass auch der Server-Side-State
+    // (Caches, RSC) nach dem Logout neu aufgebaut wird.
+    if (typeof window !== "undefined") {
+      window.location.assign("/login");
+    } else {
       router.replace("/login");
-      router.refresh();
     }
   };
 
