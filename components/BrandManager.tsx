@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { supabase } from "@/lib/supabase/client";
+import { safeQuery } from "@/lib/supabase/safeQuery";
 import { slugify } from "@/lib/slugify";
 
 import BrandCard from "./BrandCard";
@@ -48,82 +49,147 @@ export default function BrandManager() {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  const brandsRef = useRef<Brand[]>([]);
+  useEffect(() => {
+    brandsRef.current = brands;
+  }, [brands]);
+
   const loadBrands = useCallback(async () => {
-    if (!user || !activeOrg) {
+    if (!user) {
+      // Echter Logout: Liste leeren.
       setBrands([]);
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!activeOrg) {
+      // Kein activeOrg: könnte ein transienter Zustand sein (Memberships
+      // wurden gerade kurz neu geladen). Wenn wir bereits Brands haben,
+      // zeigen wir die alten weiter; loading wird zwingend beendet.
+      if (brandsRef.current.length === 0) {
+        setBrands([]);
+      }
+      setLoading(false);
+      return;
+    }
+    // Wenn schon Brands sichtbar sind (z.B. weil der Tab nur kurz im
+    // Hintergrund war), tauschen wir sie im Hintergrund aus statt das
+    // ganze UI auf "Lade Brands …" zurückzusetzen.
+    if (brandsRef.current.length === 0) {
+      setLoading(true);
+    }
     setError(null);
-    const { data, error: loadError } = await supabase
-      .from("brands")
-      .select("id, name, slug, logo_url, legal_name, organization_id")
-      .eq("organization_id", activeOrg.id)
-      .order("created_at", { ascending: true });
 
-    if (loadError) {
-      setError(loadError.message);
-      setBrands([]);
-      setLoading(false);
-      return;
-    }
+    try {
+      const brandsResult = await safeQuery(
+        () =>
+          supabase
+            .from("brands")
+            .select("id, name, slug, logo_url, legal_name, organization_id")
+            .eq("organization_id", activeOrg.id)
+            .order("created_at", { ascending: true }),
+        { label: "brands" }
+      );
 
-    const baseBrands = (data ?? []) as Array<Omit<Brand, "colors">>;
-    const brandIds = baseBrands.map((b) => b.id);
+      const { data, error: loadError } = brandsResult;
+      if (loadError) {
+        if (brandsRef.current.length === 0) {
+          setError(loadError.message);
+          setBrands([]);
+        }
+        return;
+      }
 
-    let colorsByBrand = new Map<string, string[]>();
-    if (brandIds.length > 0) {
-      const { data: colorRows } = await supabase
-        .from("brand_colors")
-        .select("brand_id, hex, group, position")
-        .in("brand_id", brandIds)
-        .order("position", { ascending: true });
+      const baseBrands = (data ?? []) as Array<Omit<Brand, "colors">>;
+      const brandIds = baseBrands.map((b) => b.id);
 
-      if (colorRows) {
-        const rows = colorRows as BrandColorPreview[];
-        const preferredOrder: BrandColorPreview["group"][] = [
-          "print",
-          "digital",
-        ];
-        for (const brandId of brandIds) {
-          const brandRows = rows.filter((r) => r.brand_id === brandId);
-          let picked: BrandColorPreview[] = [];
-          for (const group of preferredOrder) {
-            const subset = brandRows
-              .filter((r) => r.group === group)
-              .sort((a, b) => a.position - b.position);
-            if (subset.length > 0) {
-              picked = subset;
-              break;
+      const colorsByBrand = new Map<string, string[]>();
+      if (brandIds.length > 0) {
+        try {
+          const colorsResult = await safeQuery(
+            () =>
+              supabase
+                .from("brand_colors")
+                .select("brand_id, hex, group, position")
+                .in("brand_id", brandIds)
+                .order("position", { ascending: true }),
+            { label: "brand-colors-preview" }
+          );
+          const colorRows = colorsResult.data;
+          if (colorRows) {
+            const rows = colorRows as BrandColorPreview[];
+            const preferredOrder: BrandColorPreview["group"][] = [
+              "print",
+              "digital",
+            ];
+            for (const brandId of brandIds) {
+              const brandRows = rows.filter((r) => r.brand_id === brandId);
+              let picked: BrandColorPreview[] = [];
+              for (const group of preferredOrder) {
+                const subset = brandRows
+                  .filter((r) => r.group === group)
+                  .sort((a, b) => a.position - b.position);
+                if (subset.length > 0) {
+                  picked = subset;
+                  break;
+                }
+              }
+              const seen = new Set<string>();
+              const hexes: string[] = [];
+              for (const row of picked) {
+                const normalized = row.hex.toUpperCase();
+                if (seen.has(normalized)) continue;
+                seen.add(normalized);
+                hexes.push(normalized);
+                if (hexes.length >= 3) break;
+              }
+              colorsByBrand.set(brandId, hexes);
             }
           }
-          const seen = new Set<string>();
-          const hexes: string[] = [];
-          for (const row of picked) {
-            const normalized = row.hex.toUpperCase();
-            if (seen.has(normalized)) continue;
-            seen.add(normalized);
-            hexes.push(normalized);
-            if (hexes.length >= 3) break;
-          }
-          colorsByBrand.set(brandId, hexes);
+        } catch {
+          // Farb-Vorschau ist optional – bei Timeout still überspringen.
         }
       }
-    }
 
-    setBrands(
-      baseBrands.map((b) => ({
-        ...b,
-        colors: colorsByBrand.get(b.id) ?? [],
-      }))
-    );
-    setLoading(false);
+      setBrands(
+        baseBrands.map((b) => ({
+          ...b,
+          colors: colorsByBrand.get(b.id) ?? [],
+        }))
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[BrandManager] loadBrands failed", err);
+      if (brandsRef.current.length === 0) {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [activeOrg, user]);
 
   useEffect(() => {
     loadBrands();
   }, [loadBrands]);
+
+  // Wenn der Tab nach längerer Zeit zurückkehrt, hängen Supabase-Calls
+  // gerne, weil das Access-Token zwischendurch abgelaufen ist und der
+  // Auto-Refresh erst beim nächsten Tick anspringt. Wir laden in dem Fall
+  // explizit neu, sobald die Seite wieder sichtbar ist – sonst bleibt
+  // "Lade Brands …" auch nach Tab-Wechsel + Refresh stehen.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handleVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!user || !activeOrg) return;
+      loadBrands();
+    };
+    document.addEventListener("visibilitychange", handleVisible);
+    window.addEventListener("focus", handleVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisible);
+      window.removeEventListener("focus", handleVisible);
+    };
+  }, [loadBrands, user, activeOrg]);
 
   useEffect(() => {
     if (!formOpen) return;

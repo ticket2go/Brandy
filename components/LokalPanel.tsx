@@ -1,8 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 
 import { supabase } from "@/lib/supabase/client";
+import { safeQuery } from "@/lib/supabase/safeQuery";
+import { useVisibilityReload } from "@/lib/useVisibilityReload";
 
 import ConfirmDialog from "./ConfirmDialog";
 import Modal from "./Modal";
@@ -36,21 +44,44 @@ export default function LokalPanel({ brandId, onCountChange }: LokalPanelProps) 
     [onCountChange]
   );
 
+  const hasDataRef = useRef(false);
+
   const loadEntries = useCallback(async () => {
-    setLoading(true);
+    if (!hasDataRef.current) {
+      setLoading(true);
+    }
     setError(null);
-    const { data, error: loadError } = await supabase
-      .from("brand_local_entries")
-      .select("id, brand_id, content, position, created_at, updated_at")
-      .eq("brand_id", brandId)
-      .order("position", { ascending: true })
-      .order("created_at", { ascending: true });
+    let result;
+    try {
+      result = await safeQuery(
+        () =>
+          supabase
+            .from("brand_local_entries")
+            .select("id, brand_id, content, position, created_at, updated_at")
+            .eq("brand_id", brandId)
+            .order("position", { ascending: true })
+            .order("created_at", { ascending: true }),
+        { label: "brand-local-entries" }
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[LokalPanel] load failed", err);
+      if (!hasDataRef.current) {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+      }
+      setLoading(false);
+      return;
+    }
+    const { data, error: loadError } = result;
 
     if (loadError) {
-      setError(loadError.message);
-      setEntries([]);
-      reportCount(0);
+      if (!hasDataRef.current) {
+        setError(loadError.message);
+        setEntries([]);
+        reportCount(0);
+      }
     } else {
+      hasDataRef.current = true;
       const rows = (data ?? []) as LocalEntry[];
       setEntries(rows);
       reportCount(rows.length);
@@ -61,6 +92,8 @@ export default function LokalPanel({ brandId, onCountChange }: LokalPanelProps) 
   useEffect(() => {
     loadEntries();
   }, [loadEntries]);
+
+  useVisibilityReload(loadEntries);
 
   const handleCreate = useCallback(
     async (content: string) => {

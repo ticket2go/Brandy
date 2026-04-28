@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 
 import { supabase } from "@/lib/supabase/client";
+import { safeQuery } from "@/lib/supabase/safeQuery";
 import { cssFormatName, formatLabel, mimeTypeForFormat } from "@/lib/fontFormat";
+import { useVisibilityReload } from "@/lib/useVisibilityReload";
 
 import AddFontModal, { type AddFontSubmit } from "./AddFontModal";
 import ConfirmDialog from "./ConfirmDialog";
@@ -112,30 +114,54 @@ export default function TypographyPanel({
     });
   };
 
+  const hasDataRef = useRef(false);
+
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!hasDataRef.current) {
+      setLoading(true);
+    }
     setError(null);
-    const [fontsRes, filesRes] = await Promise.all([
-      supabase
-        .from("brand_fonts")
-        .select(
-          "id, brand_id, family, source, license_confirmed, google_category, roles, position"
-        )
-        .eq("brand_id", brandId)
-        .order("position", { ascending: true })
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("brand_font_files")
-        .select(
-          "id, font_id, variant, style_label, weight, italic, format, storage_path, size_bytes"
+    let fontsRes, filesRes;
+    try {
+      [fontsRes, filesRes] = await Promise.all([
+        safeQuery(
+          () =>
+            supabase
+              .from("brand_fonts")
+              .select(
+                "id, brand_id, family, source, license_confirmed, google_category, roles, position"
+              )
+              .eq("brand_id", brandId)
+              .order("position", { ascending: true })
+              .order("created_at", { ascending: true }),
+          { label: "brand-fonts" }
         ),
-    ]);
+        safeQuery(
+          () =>
+            supabase
+              .from("brand_font_files")
+              .select(
+                "id, font_id, variant, style_label, weight, italic, format, storage_path, size_bytes"
+              ),
+          { label: "brand-font-files" }
+        ),
+      ]);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[TypographyPanel] load failed", err);
+      if (!hasDataRef.current) {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler.");
+      }
+      setLoading(false);
+      return;
+    }
 
     if (fontsRes.error) {
-      setError(fontsRes.error.message);
+      if (!hasDataRef.current) setError(fontsRes.error.message);
     } else if (filesRes.error) {
-      setError(filesRes.error.message);
+      if (!hasDataRef.current) setError(filesRes.error.message);
     } else {
+      hasDataRef.current = true;
       const fontRows = ((fontsRes.data ?? []) as BrandFont[]).map((f) => ({
         ...f,
         roles: Array.isArray(f.roles) ? f.roles : [],
@@ -154,6 +180,8 @@ export default function TypographyPanel({
   useEffect(() => {
     load();
   }, [load]);
+
+  useVisibilityReload(load);
 
   const filesByFont = useMemo(() => {
     const map = new Map<string, BrandFontFile[]>();

@@ -6,12 +6,17 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 
-import { supabase } from "@/lib/supabase/client";
+import {
+  onSupabaseRecreated,
+  recreateSupabaseClient,
+  supabase,
+} from "@/lib/supabase/client";
 
 export type Profile = {
   id: string;
@@ -69,6 +74,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [memberships, setMemberships] = useState<MembershipWithOrg[]>([]);
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
+  const [clientVersion, setClientVersion] = useState(0);
+  const signOutInFlightRef = useRef(false);
+
+  useEffect(() => {
+    // Wenn safeQuery den Supabase-Client neu erzeugt (Recovery aus
+    // einem Auth-Stall), müssen wir unsere onAuthStateChange-Sub neu
+    // anhängen, sonst hört der Provider nicht mehr mit. Wir
+    // bumpen dafür einen Version-Counter, der den Init-Effect
+    // unten neu laufen lässt.
+    return onSupabaseRecreated(() => {
+      setClientVersion((v) => v + 1);
+    });
+  }, []);
 
   const loadProfileAndMemberships = useCallback(async (user: User | null) => {
     if (!user) {
@@ -92,58 +110,71 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           .eq("user_id", user.id),
       ]);
 
+      // Profil: nur überschreiben, wenn der Fetch ein Ergebnis (auch
+      // null) sauber zurückgibt. Bei einem Fehler (z.B. transientes
+      // 401 nach Tab-Wechsel) behalten wir den bisherigen State, damit
+      // is_admin & Co. nicht kurzzeitig wegfallen.
       if (profileRes.error) {
-        // Tabelle/Spalte fehlt? Kein harter Fehler, einfach ohne Profil
-        // weiterlaufen, damit die UI nicht in "Lade …" hängen bleibt.
         // eslint-disable-next-line no-console
-        console.warn("[SessionProvider] profile load:", profileRes.error.message);
+        console.warn(
+          "[SessionProvider] profile load:",
+          profileRes.error.message
+        );
+      } else {
+        setProfile(
+          profileRes.data
+            ? (profileRes.data as Profile)
+            : ({
+                id: user.id,
+                username: null,
+                full_name: null,
+                is_admin: false,
+              } satisfies Profile)
+        );
       }
+
+      // Mitgliedschaften: dito. Ein transienter Error darf NICHT zu
+      // einem leeren Memberships-Array führen, sonst kippt activeOrg
+      // auf null und nachgelagerte Listen (BrandManager) setzen sich
+      // auf "Lade …" zurück.
       if (membersRes.error) {
         // eslint-disable-next-line no-console
         console.warn(
           "[SessionProvider] memberships load:",
           membersRes.error.message
         );
+      } else {
+        const rows = (membersRes.data ?? []) as Array<{
+          id: string;
+          organization_id: string;
+          user_id: string;
+          role: MemberRole;
+          organization: Organization | null;
+        }>;
+        const cleaned: MembershipWithOrg[] = rows
+          .filter((r) => r.organization)
+          .map((r) => ({
+            id: r.id,
+            organization_id: r.organization_id,
+            user_id: r.user_id,
+            role: r.role,
+            organization: r.organization as Organization,
+          }));
+        // Defensive: Wenn die Antwort technisch erfolgreich, aber leer
+        // ist, obwohl wir vorher Mitgliedschaften hatten, werten wir
+        // das als transienten RLS-/Auth-Schluckauf nach Tab-Wechsel und
+        // behalten den alten State. Echte "User wurde aus allen Orgs
+        // entfernt"-Fälle korrigieren sich beim nächsten Refresh.
+        setMemberships((prev) => {
+          if (cleaned.length === 0 && prev.length > 0) return prev;
+          return cleaned;
+        });
       }
-
-      setProfile(
-        profileRes.data
-          ? (profileRes.data as Profile)
-          : ({
-              id: user.id,
-              username: null,
-              full_name: null,
-              is_admin: false,
-            } satisfies Profile)
-      );
-
-      const rows = (membersRes.data ?? []) as Array<{
-        id: string;
-        organization_id: string;
-        user_id: string;
-        role: MemberRole;
-        organization: Organization | null;
-      }>;
-      const cleaned: MembershipWithOrg[] = rows
-        .filter((r) => r.organization)
-        .map((r) => ({
-          id: r.id,
-          organization_id: r.organization_id,
-          user_id: r.user_id,
-          role: r.role,
-          organization: r.organization as Organization,
-        }));
-      setMemberships(cleaned);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("[SessionProvider] loadProfileAndMemberships failed", err);
-      setProfile({
-        id: user.id,
-        username: null,
-        full_name: null,
-        is_admin: false,
-      });
-      setMemberships([]);
+      // Bei einem unerwarteten Fehler ebenfalls den bisherigen State
+      // erhalten – kein Hard-Reset auf "kein Profil / keine Orga".
     }
   }, []);
 
@@ -182,12 +213,49 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     })();
 
+    // Internal signOut tracking: nur bei einem vom User initiierten
+    // Logout (siehe signOut() unten) wollen wir das nachfolgende
+    // SIGNED_OUT-Event als echten Logout behandeln. Die supabase-js
+    // Lib feuert `SIGNED_OUT` aber auch dann, wenn ein Refresh-Token
+    // im Hintergrund mit einem (transienten) Fehler antwortet – z.B.
+    // wenn ein Lock nach Tab-Idle gestohlen wurde. Diesen "False
+    // Positive" wollen wir ignorieren.
     const { data: subscription } = supabase.auth.onAuthStateChange(
-      async (_event, newSession) => {
+      async (event, newSession) => {
         if (cancelled) return;
+
+        if (event === "SIGNED_OUT") {
+          if (signOutInFlightRef.current) {
+            setSession(null);
+            await loadProfileAndMemberships(null);
+            return;
+          }
+          // Kein vom User initiierter Logout: prüfen, ob im
+          // Storage wirklich keine Session mehr liegt. Wenn doch,
+          // war es ein transienter Auth-Fehler und wir behalten die
+          // alte Session.
+          try {
+            const { data } = await supabase.auth.getSession();
+            if (cancelled) return;
+            if (data.session) {
+              setSession(data.session);
+              await loadProfileAndMemberships(data.session.user);
+              return;
+            }
+          } catch {
+            // Wenn getSession() nicht antwortet, bleibt die alte
+            // Session aktiv – kein Hard-Logout.
+            return;
+          }
+          setSession(null);
+          await loadProfileAndMemberships(null);
+          return;
+        }
+
+        if (!newSession) return;
         setSession(newSession);
         try {
-          await loadProfileAndMemberships(newSession?.user ?? null);
+          await loadProfileAndMemberships(newSession.user ?? null);
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error("[SessionProvider] auth change failed", err);
@@ -195,12 +263,79 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     );
 
+    // Beim Zurückkommen in den Tab kann der eingebaute Auto-Refresh
+    // hängen (Browser-Throttling im Hintergrund + Auth-Client-Locks).
+    // Strategie:
+    //   * "hidden" → Zeitstempel speichern.
+    //   * "visible" + > HIDDEN_THRESHOLD_MS verstrichen → den
+    //     Supabase-Client proaktiv neu aufbauen. Damit ist garantiert,
+    //     dass der nächste Query-Aufruf nicht in einen toten Refresh-
+    //     Lock läuft, ohne dass die User-UI auf "Lade …" hängen muss.
+    //   * Sonst Session wie gewohnt prüfen.
+    const HIDDEN_THRESHOLD_MS = 30_000;
+    let lastHiddenAt: number | null = null;
+
+    const handleVisible = async () => {
+      if (typeof document === "undefined") return;
+      if (document.visibilityState !== "visible") return;
+
+      const wasHiddenLong =
+        lastHiddenAt !== null &&
+        Date.now() - lastHiddenAt > HIDDEN_THRESHOLD_MS;
+      lastHiddenAt = null;
+
+      if (wasHiddenLong) {
+        // Proaktiver Reset: neuer Client → frischer Auth-State.
+        // setClientVersion-Listener stößt einen sauberen
+        // onAuthStateChange-Restart an. Wir laden die Session danach
+        // auch direkt selbst neu, damit Komponenten nicht erst auf
+        // den nächsten Auth-Event warten müssen.
+        try {
+          recreateSupabaseClient();
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error("[SessionProvider] recreate on visible failed", err);
+        }
+      }
+
+      try {
+        const result = await Promise.race<{
+          data: { session: Session | null };
+        } | null>([
+          supabase.auth.getSession(),
+          new Promise((resolve) => window.setTimeout(() => resolve(null), 3000)),
+        ]);
+        if (cancelled) return;
+        const fetched = result?.data?.session ?? null;
+        if (!fetched) return;
+        setSession(fetched);
+        await loadProfileAndMemberships(fetched.user);
+      } catch (err) {
+        // Hängender Lock o.ä. – einfach still die alte Session behalten.
+        // eslint-disable-next-line no-console
+        console.error("[SessionProvider] visibility refresh failed", err);
+      }
+    };
+
+    const handleHidden = () => {
+      if (typeof document === "undefined") return;
+      if (document.visibilityState !== "hidden") return;
+      lastHiddenAt = Date.now();
+    };
+    document.addEventListener("visibilitychange", handleHidden);
+    document.addEventListener("visibilitychange", handleVisible);
+    window.addEventListener("focus", handleVisible);
+
     return () => {
       cancelled = true;
       window.clearTimeout(safety);
       subscription.subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisible);
+      document.removeEventListener("visibilitychange", handleHidden);
+      window.removeEventListener("focus", handleVisible);
     };
-  }, [loadProfileAndMemberships]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadProfileAndMemberships, clientVersion]);
 
   useEffect(() => {
     try {
@@ -241,6 +376,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    // Markiert das nachfolgende SIGNED_OUT-Event als echten Logout,
+    // damit der onAuthStateChange-Handler ihn nicht als
+    // transient-Auth-Fehler ignoriert.
+    signOutInFlightRef.current = true;
+
     // Lokalen State zuerst leeren, damit die UI auch dann sauber
     // umschaltet, wenn supabase.auth.signOut() langsam ist oder hängt.
     setSession(null);

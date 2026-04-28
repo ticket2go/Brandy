@@ -190,38 +190,75 @@ export default function AccountPanel() {
           <ul className="mt-3 flex flex-col gap-2">
             {memberships.map((m) => {
               const logoSrc = resolveOrgLogoSrc(m.organization.logo_url);
+              const canManageOrg =
+                profile?.is_admin === true ||
+                m.role === "manager" ||
+                m.organization.manager_id === user?.id;
               return (
-                <li
-                  key={m.id}
-                  className="flex items-center justify-between gap-4 rounded-xl border border-black/10 bg-white px-4 py-3"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-black/10 bg-black/5">
-                      {logoSrc ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={logoSrc}
-                          alt={`${m.organization.name} Logo`}
-                          className="h-full w-full object-contain p-1"
-                        />
-                      ) : (
-                        <span className="text-[10px] font-semibold uppercase tracking-widest text-black/30">
-                          {m.organization.name.slice(0, 2)}
+                <li key={m.id}>
+                  <Link
+                    href={`/admin/organizations/${m.organization.id}`}
+                    className="flex items-center justify-between gap-4 rounded-xl border border-black/10 bg-white px-4 py-3 transition hover:border-black/30 hover:bg-black/[0.02]"
+                    title={
+                      canManageOrg
+                        ? `B.${m.organization.name} öffnen & bearbeiten`
+                        : `Mitglieder von B.${m.organization.name} ansehen`
+                    }
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-black/10 bg-black/5">
+                        {logoSrc ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={logoSrc}
+                            alt={`${m.organization.name} Logo`}
+                            className="h-full w-full object-contain p-1"
+                          />
+                        ) : (
+                          <span className="text-[10px] font-semibold uppercase tracking-widest text-black/30">
+                            {m.organization.name.slice(0, 2)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate text-sm font-semibold text-black">
+                          B.{m.organization.name}
+                        </span>
+                        <span className="truncate text-xs text-black/50">
+                          {m.organization.legal_name}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="rounded-full bg-black/5 px-2.5 py-1 text-[11px] font-medium text-black/70">
+                        {ROLE_LABELS[m.role] ?? m.role}
+                      </span>
+                      {canManageOrg && (
+                        <span
+                          className="rounded-md bg-black px-2.5 py-1 text-[11px] font-semibold text-white"
+                          title="Du darfst diese Organisation bearbeiten"
+                        >
+                          Bearbeiten
                         </span>
                       )}
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        aria-hidden
+                        className="text-black/30"
+                      >
+                        <path
+                          d="M5 3l4 4-4 4"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
                     </div>
-                    <div className="flex min-w-0 flex-col">
-                      <span className="truncate text-sm font-semibold text-black">
-                        B.{m.organization.name}
-                      </span>
-                      <span className="truncate text-xs text-black/50">
-                        {m.organization.legal_name}
-                      </span>
-                    </div>
-                  </div>
-                  <span className="shrink-0 rounded-full bg-black/5 px-2.5 py-1 text-[11px] font-medium text-black/70">
-                    {ROLE_LABELS[m.role] ?? m.role}
-                  </span>
+                  </Link>
                 </li>
               );
             })}

@@ -7,8 +7,15 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/auth/apiFetch";
 import { useSession } from "./SessionProvider";
+import ManagerTagInput from "./ManagerTagInput";
 
 const ORG_BUCKET = "org-assets";
+
+type ManagerProfile = {
+  id: string;
+  username: string | null;
+  full_name: string | null;
+};
 
 type AdminOrganization = {
   id: string;
@@ -17,6 +24,7 @@ type AdminOrganization = {
   slug: string;
   logo_url: string | null;
   manager_id: string | null;
+  managers: ManagerProfile[];
 };
 
 function logoSrc(path: string | null): string | null {
@@ -35,7 +43,7 @@ export default function AdminPanel() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createLegal, setCreateLegal] = useState("");
-  const [createManager, setCreateManager] = useState("");
+  const [createManagers, setCreateManagers] = useState<string[]>([]);
   const [createBusy, setCreateBusy] = useState(false);
 
   const refreshOrgs = useCallback(async () => {
@@ -82,7 +90,7 @@ export default function AdminPanel() {
       body: JSON.stringify({
         name,
         legal_name: legal,
-        manager_username: createManager.trim() || null,
+        manager_usernames: createManagers,
       }),
     });
     const json = await res.json();
@@ -93,7 +101,7 @@ export default function AdminPanel() {
     }
     setCreateName("");
     setCreateLegal("");
-    setCreateManager("");
+    setCreateManagers([]);
     setCreateOpen(false);
     setCreateBusy(false);
     await refreshOrgs();
@@ -164,7 +172,8 @@ export default function AdminPanel() {
             Organisationen
           </h1>
           <p className="text-sm text-black/60">
-            Lege Organisationen an und ordne ihnen einen Verwalter zu. Über das{" "}
+            Lege Organisationen an und ordne ihnen einen oder mehrere
+            Verwalter zu. Über das{" "}
             <kbd className="rounded bg-black/5 px-1.5 py-0.5 text-[11px] text-black/70">
               +
             </kbd>{" "}
@@ -218,8 +227,8 @@ export default function AdminPanel() {
           >
             <h2 className="text-2xl font-bold text-black">Neue Organisation</h2>
             <p className="mt-1 text-sm text-black/60">
-              Name, Firmierung und optional einen Verwalter (Benutzername eines
-              registrierten Users).
+              Name, Firmierung und optional einen oder mehrere Verwalter
+              (Benutzernamen registrierter User).
             </p>
             <form onSubmit={handleCreate} className="mt-5 flex flex-col gap-4">
               <label className="flex flex-col gap-1.5">
@@ -249,22 +258,14 @@ export default function AdminPanel() {
                   placeholder="ACME GmbH & Co. KG"
                 />
               </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium uppercase tracking-wider text-black/50">
-                  Verwalter (optional)
-                </span>
-                <input
-                  type="text"
-                  value={createManager}
-                  onChange={(e) => setCreateManager(e.target.value)}
-                  disabled={createBusy}
-                  className="rounded-xl border border-black/15 bg-white px-4 py-3 text-base text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10"
-                  placeholder="benutzername"
-                />
-                <span className="text-[11px] text-black/40">
-                  Der User muss bereits registriert sein.
-                </span>
-              </label>
+              <ManagerTagInput
+                values={createManagers}
+                onChange={setCreateManagers}
+                disabled={createBusy}
+                label="Verwalter (optional, mehrere möglich)"
+                placeholder="Tippe einen Benutzernamen …"
+                helperText="Tippen für dynamische Suche – Auswahl per Enter oder Klick. Mehrere Verwalter erlaubt."
+              />
 
               <div className="mt-2 flex items-center justify-end gap-3">
                 <button
@@ -302,34 +303,14 @@ function OrgRow({
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(org.name);
   const [legal, setLegal] = useState(org.legal_name);
-  const [managerUsername, setManagerUsername] = useState("");
-  const [managerLabel, setManagerLabel] = useState<string>("…");
+  const [managers, setManagers] = useState<string[]>(
+    org.managers.map((m) => m.username ?? "").filter(Boolean)
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!org.manager_id) {
-        setManagerLabel("—");
-        return;
-      }
-      const { data } = await supabase
-        .from("profiles")
-        .select("username, full_name")
-        .eq("id", org.manager_id)
-        .maybeSingle();
-      if (cancelled) return;
-      if (!data) {
-        setManagerLabel("unbekannt");
-      } else {
-        setManagerLabel(data.username ?? data.full_name ?? "—");
-        setManagerUsername(data.username ?? "");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [org.manager_id]);
+    setManagers(org.managers.map((m) => m.username ?? "").filter(Boolean));
+  }, [org.managers]);
 
   const handleSave = async () => {
     if (busy) return;
@@ -340,7 +321,7 @@ function OrgRow({
       body: JSON.stringify({
         name: name.trim(),
         legal_name: legal.trim(),
-        manager_username: managerUsername.trim() || null,
+        manager_usernames: managers,
       }),
     });
     const json = await res.json();
@@ -358,7 +339,7 @@ function OrgRow({
     if (busy) return;
     if (
       !window.confirm(
-        `Organisation „${org.name}“ wirklich löschen? Brands der Organisation verlieren ihre Zuordnung.`
+        `Organisation „${org.name}" wirklich löschen? Brands der Organisation verlieren ihre Zuordnung.`
       )
     ) {
       return;
@@ -416,6 +397,12 @@ function OrgRow({
   };
 
   const src = logoSrc(org.logo_url);
+  const managerLabel =
+    org.managers.length === 0
+      ? "—"
+      : org.managers
+          .map((m) => m.username ?? m.full_name ?? "—")
+          .join(", ");
 
   return (
     <li className="rounded-2xl border border-black/10 bg-white p-5">
@@ -435,7 +422,7 @@ function OrgRow({
           )}
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
           {editing ? (
             <div className="flex flex-col gap-2">
               <input
@@ -451,12 +438,11 @@ function OrgRow({
                 className="rounded-md border border-black/15 px-3 py-2 text-sm text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10"
                 placeholder="Firmierung"
               />
-              <input
-                value={managerUsername}
-                onChange={(e) => setManagerUsername(e.target.value)}
+              <ManagerTagInput
+                values={managers}
+                onChange={setManagers}
                 disabled={busy}
-                className="rounded-md border border-black/15 px-3 py-2 text-sm text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10"
-                placeholder="Verwalter (Username)"
+                placeholder="Verwalter (Benutzername)"
               />
             </div>
           ) : (
@@ -466,8 +452,9 @@ function OrgRow({
               </h2>
               <p className="truncate text-sm text-black/60">{org.legal_name}</p>
               <p className="text-xs text-black/40">
-                Slug: <code className="text-black/60">{org.slug}</code> ·
-                Verwalter: <span className="text-black/70">{managerLabel}</span>
+                Slug: <code className="text-black/60">{org.slug}</code> ·{" "}
+                {org.managers.length > 1 ? "Verwalter:innen" : "Verwalter"}:{" "}
+                <span className="text-black/70">{managerLabel}</span>
               </p>
             </>
           )}
@@ -504,6 +491,11 @@ function OrgRow({
                   setEditing(false);
                   setName(org.name);
                   setLegal(org.legal_name);
+                  setManagers(
+                    org.managers
+                      .map((m) => m.username ?? "")
+                      .filter(Boolean)
+                  );
                 }}
                 disabled={busy}
                 className="rounded-md px-3 py-1.5 text-xs text-black/60 hover:bg-black/5"
