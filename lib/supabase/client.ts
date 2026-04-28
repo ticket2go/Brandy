@@ -21,39 +21,84 @@ if (!supabaseAnonKey) {
   );
 }
 
-// Bekannter Bug in @supabase/supabase-js: der eingebaute
-// `navigatorLock` (Web Locks API) gerät nach längerer Tab-Idle in einen
-// Zustand, in dem jeder Lock-Acquire sofort mit
-//   "Lock was stolen by another request"
-// abgebrochen wird. Folgen:
-//   * supabase.auth.getSession() / refreshSession() hängen oder
-//     scheitern,
-//   * supabase-js wirft den User intern aus (_removeSession + emit
-//     SIGNED_OUT), obwohl die Session lokal noch gültig wäre,
-//   * jede nachfolgende RLS-pflichtige Query bleibt im
-//     "Lade …"-Zustand hängen.
-//
-// Lösung laut supabase/auth-js#768: in browserseitig genutzten Single-
-// Tab-Apps den offiziellen `processLock` verwenden – ein reiner
-// In-Memory-Mutex, der die Auth-Operationen weiterhin korrekt
-// serialisiert, aber die kaputte `navigator.locks`-Pfadrichtung
-// vermeidet.
-export const supabase: SupabaseClient<Database> = createClient<Database>(
-  supabaseUrl,
-  supabaseAnonKey,
-  {
+function buildClient(): SupabaseClient<Database> {
+  // Bekanntes Verhalten in `@supabase/auth-js`:
+  //
+  // 1. Der Default-Lock (`navigator.locks`) kann nach Tab-Idle in einen
+  //    "Lock was stolen"-Stall laufen. Wir benutzen daher den
+  //    offiziellen `processLock` (reiner In-Memory-Mutex).
+  //
+  // 2. Wenn ein interner `_callRefreshToken` einen Fetch absetzt und
+  //    keine Antwort mehr erhält (Browser hat den Hintergrund-Tab
+  //    eingefroren, Server-Reset, …), bleibt das Promise in
+  //    `refreshingDeferred` für immer pending. Jeder weitere
+  //    Refresh-Aufruf wartet sich darauf tot. Genau deswegen sieht der
+  //    User auf neu gemounteten Tabs (Farben/Schriften/Lokal) ein
+  //    dauerhaftes "Lade …" – nur ein Page-Reload heilt den Zustand.
+  //
+  //    Wir setzen daher `lockAcquireTimeout` kurz und stellen über
+  //    `recreateSupabaseClient()` (siehe unten) zusätzlich eine harte
+  //    Recovery zur Verfügung: bei wiederholtem Timeout einer Daten-
+  //    query wird der gesamte Client weggeworfen und neu aufgebaut –
+  //    das ist äquivalent zum Reload, ohne den User zu stören.
+  return createClient<Database>(supabaseUrl as string, supabaseAnonKey as string, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
       lock: processLock,
-      // Kürzeres Lock-Timeout: wenn ein interner Auth-Recover hängt,
-      // wartet eine konkurrierende Auth-Operation nicht 5s, sondern
-      // klaut den Lock nach 1.5s. Das verhindert, dass Datenqueries
-      // nach Tab-Wechsel hinter einem stehengebliebenen Recover
-      // ewig warten.
-      // (Nicht in den TS-Typen exposed, geht aber durch zur GoTrue.)
       ...({ lockAcquireTimeout: 1500 } as Record<string, unknown>),
+    },
+  });
+}
+
+let _inner: SupabaseClient<Database> = buildClient();
+let _version = 0;
+const _listeners = new Set<(version: number) => void>();
+
+export function recreateSupabaseClient(): number {
+  _version += 1;
+  _inner = buildClient();
+  for (const listener of _listeners) {
+    try {
+      listener(_version);
+    } catch {
+      // ignore
+    }
+  }
+  return _version;
+}
+
+export function onSupabaseRecreated(
+  listener: (version: number) => void
+): () => void {
+  _listeners.add(listener);
+  return () => {
+    _listeners.delete(listener);
+  };
+}
+
+export function getSupabaseClientVersion(): number {
+  return _version;
+}
+
+// Proxy-basierter Zugriff: alle existierenden Imports (`supabase`)
+// bekommen automatisch den jeweils aktuellen Client geliefert. Methoden
+// werden an den inneren Client gebunden, damit `this` stimmt.
+export const supabase: SupabaseClient<Database> = new Proxy(
+  {} as SupabaseClient<Database>,
+  {
+    get(_target, prop) {
+      const value = (_inner as unknown as Record<string | symbol, unknown>)[
+        prop as string
+      ];
+      if (typeof value === "function") {
+        return (value as (...args: unknown[]) => unknown).bind(_inner);
+      }
+      return value;
+    },
+    has(_target, prop) {
+      return prop in (_inner as unknown as object);
     },
   }
 );

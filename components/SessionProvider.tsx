@@ -12,7 +12,10 @@ import {
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 
-import { supabase } from "@/lib/supabase/client";
+import {
+  onSupabaseRecreated,
+  supabase,
+} from "@/lib/supabase/client";
 
 export type Profile = {
   id: string;
@@ -70,7 +73,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [memberships, setMemberships] = useState<MembershipWithOrg[]>([]);
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
+  const [clientVersion, setClientVersion] = useState(0);
   const signOutInFlightRef = useRef(false);
+
+  useEffect(() => {
+    // Wenn safeQuery den Supabase-Client neu erzeugt (Recovery aus
+    // einem Auth-Stall), müssen wir unsere onAuthStateChange-Sub neu
+    // anhängen, sonst hört der Provider nicht mehr mit. Wir
+    // bumpen dafür einen Version-Counter, der den Init-Effect
+    // unten neu laufen lässt.
+    return onSupabaseRecreated(() => {
+      setClientVersion((v) => v + 1);
+    });
+  }, []);
 
   const loadProfileAndMemberships = useCallback(async (user: User | null) => {
     if (!user) {
@@ -284,7 +299,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", handleVisible);
       window.removeEventListener("focus", handleVisible);
     };
-  }, [loadProfileAndMemberships]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadProfileAndMemberships, clientVersion]);
 
   useEffect(() => {
     try {
