@@ -39,28 +39,26 @@ function runWithTimeout<T>(
 }
 
 /**
- * Führt eine Supabase-Query mit hartem Timeout aus.
+ * Führt eine Supabase-Query mit kurzem Hard-Timeout aus.
  *
- * Recovery-Strategie:
- *  1. Erster Versuch (timeoutMs).
- *  2. Bei Timeout → `auth.refreshSession()` mit kurzem Limit, dann
- *     zweiter Versuch.
- *  3. Bei erneutem Timeout → kompletten Supabase-Client neu erzeugen
- *     (Auth-Stalls in `_callRefreshToken` heilt nur ein neuer Client),
- *     dann letzter Versuch.
+ * Recovery-Strategie ist auf schnelle Reaktion getrimmt – wenn der
+ * Auth-Stack nach Tab-Idle stallt, soll der User höchstens ~2.5s
+ * spüren:
  *
- * Hintergrund: Nach längerer Tab-Idle bleibt das interne
- * `refreshingDeferred`-Promise im supabase-auth-Client mitunter für
- * immer pending. Jeder neue `auth.*`-Call wartet sich darauf tot,
- * sodass selbst ein neuer `refreshSession()` nichts mehr bringt – nur
- * ein Page-Reload heilt den Zustand. Mit dem Client-Recreate-Schritt
- * machen wir genau das, ohne den User aus der App zu werfen.
+ *  1. 2.5s erster Versuch.
+ *  2. Bei Timeout sofort den Supabase-Client neu erzeugen
+ *     (heilt jeden hängenden internen Refresh-Promise) und mit
+ *     1s warten auf Auth-Init nochmals probieren – 4s Hard-Limit.
+ *
+ * Der `SessionProvider` baut den Client zusätzlich proaktiv neu, wenn
+ * der Tab > 30s im Hintergrund war; in dem typischen Fall fällt
+ * Stufe 1 also gar nicht mehr in den Stall.
  */
 export async function safeQuery<T>(
   build: () => QueryLike<T>,
   options: { timeoutMs?: number; label?: string } = {}
 ): Promise<T> {
-  const timeoutMs = options.timeoutMs ?? 5000;
+  const timeoutMs = options.timeoutMs ?? 2500;
   const label = options.label ?? "supabase";
 
   try {
@@ -69,35 +67,17 @@ export async function safeQuery<T>(
     if (!(err instanceof TimeoutError)) throw err;
   }
 
-  // 2. Versuch nach Auth-Refresh.
-  try {
-    await Promise.race([
-      supabase.auth.refreshSession(),
-      new Promise((resolve) => window.setTimeout(resolve, 1500)),
-    ]);
-  } catch {
-    // ignore – ein hängender Refresh blockiert den Retry nicht
-  }
-  try {
-    return await runWithTimeout(build, timeoutMs, label);
-  } catch (err) {
-    if (!(err instanceof TimeoutError)) throw err;
-  }
-
-  // 3. Letzter Versuch: kompletten Client neu aufbauen, der Build()-
-  // Aufruf greift dabei automatisch auf den frisch erstellten Client zu
-  // (siehe Proxy in lib/supabase/client.ts).
+  // Direkt zum harten Recovery-Pfad: kompletten Client neu aufbauen.
+  // Das ist das einzig zuverlässige Mittel gegen einen toten
+  // refreshingDeferred-Promise im supabase-auth-Client.
   recreateSupabaseClient();
-  // Auf den initialize-Pfad des neuen Clients warten, damit die Query
-  // mit gültiger Session fährt. getSession() implizit ruft die
-  // initializePromise auf.
   try {
     await Promise.race([
       supabase.auth.getSession(),
-      new Promise((resolve) => window.setTimeout(resolve, 1500)),
+      new Promise((resolve) => window.setTimeout(resolve, 1000)),
     ]);
   } catch {
     // ignore
   }
-  return runWithTimeout(build, timeoutMs, label);
+  return runWithTimeout(build, 4000, label);
 }

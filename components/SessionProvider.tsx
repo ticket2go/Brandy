@@ -14,6 +14,7 @@ import type { Session, User } from "@supabase/supabase-js";
 
 import {
   onSupabaseRecreated,
+  recreateSupabaseClient,
   supabase,
 } from "@/lib/supabase/client";
 
@@ -264,13 +265,39 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     // Beim Zurückkommen in den Tab kann der eingebaute Auto-Refresh
     // hängen (Browser-Throttling im Hintergrund + Auth-Client-Locks).
-    // Wir lesen daher selbst noch einmal die Session aus dem Storage –
-    // mit hartem 3s-Timeout. Wichtig: bei Timeout / leerem Ergebnis
-    // setzen wir die Session NICHT auf null. Lieber die alte Session
-    // weiterverwenden, als den User aus Versehen "auszuloggen".
+    // Strategie:
+    //   * "hidden" → Zeitstempel speichern.
+    //   * "visible" + > HIDDEN_THRESHOLD_MS verstrichen → den
+    //     Supabase-Client proaktiv neu aufbauen. Damit ist garantiert,
+    //     dass der nächste Query-Aufruf nicht in einen toten Refresh-
+    //     Lock läuft, ohne dass die User-UI auf "Lade …" hängen muss.
+    //   * Sonst Session wie gewohnt prüfen.
+    const HIDDEN_THRESHOLD_MS = 30_000;
+    let lastHiddenAt: number | null = null;
+
     const handleVisible = async () => {
       if (typeof document === "undefined") return;
       if (document.visibilityState !== "visible") return;
+
+      const wasHiddenLong =
+        lastHiddenAt !== null &&
+        Date.now() - lastHiddenAt > HIDDEN_THRESHOLD_MS;
+      lastHiddenAt = null;
+
+      if (wasHiddenLong) {
+        // Proaktiver Reset: neuer Client → frischer Auth-State.
+        // setClientVersion-Listener stößt einen sauberen
+        // onAuthStateChange-Restart an. Wir laden die Session danach
+        // auch direkt selbst neu, damit Komponenten nicht erst auf
+        // den nächsten Auth-Event warten müssen.
+        try {
+          recreateSupabaseClient();
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error("[SessionProvider] recreate on visible failed", err);
+        }
+      }
+
       try {
         const result = await Promise.race<{
           data: { session: Session | null };
@@ -289,6 +316,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         console.error("[SessionProvider] visibility refresh failed", err);
       }
     };
+
+    const handleHidden = () => {
+      if (typeof document === "undefined") return;
+      if (document.visibilityState !== "hidden") return;
+      lastHiddenAt = Date.now();
+    };
+    document.addEventListener("visibilitychange", handleHidden);
     document.addEventListener("visibilitychange", handleVisible);
     window.addEventListener("focus", handleVisible);
 
@@ -297,6 +331,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(safety);
       subscription.subscription.unsubscribe();
       document.removeEventListener("visibilitychange", handleVisible);
+      document.removeEventListener("visibilitychange", handleHidden);
       window.removeEventListener("focus", handleVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
