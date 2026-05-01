@@ -15,6 +15,7 @@ const primaryItems: NavItem[] = [
   { label: "Brands", href: "/#brands" },
   { label: "Design Manuals", href: "/design-manuals" },
   { label: "Ecosystem", href: "/ecosystem" },
+  { label: "QR-Code Generator", href: "/qr-code-generator" },
 ];
 
 export default function NavCard() {
