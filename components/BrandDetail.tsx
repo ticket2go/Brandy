@@ -18,6 +18,7 @@ import BrandRoles from "./BrandRoles";
 import ColorsPanel from "./ColorsPanel";
 import LogokitPanel from "./LogokitPanel";
 import LokalPanel from "./LokalPanel";
+import PresentationPanel from "./PresentationPanel";
 import TypographyPanel from "./TypographyPanel";
 import {
   CreativeCloudIcon,
@@ -1058,7 +1059,12 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           {activeTab === "elemente" && <PlaceholderPanel title="Elemente" />}
           {activeTab === "digital" && <PlaceholderPanel title="Digital" />}
           {activeTab === "praesentation" && (
-            <PlaceholderPanel title="Präsentation" />
+            <PresentationPanel
+              brandId={brand.id}
+              brandName={brand.name}
+              legalName={brand.legal_name}
+              organizationId={brand.organization_id}
+            />
           )}
           {activeTab === "lokal" && (
             <LokalPanel
