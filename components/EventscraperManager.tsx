@@ -8,13 +8,16 @@ import {
 } from "react";
 
 import ConfirmDialog from "./ConfirmDialog";
-import ScraperCard from "./ScraperCard";
+import EventscraperCard from "./EventscraperCard";
 import {
   loadScrapers,
+  newScraperId,
+  newScraperSource,
   normalizeScraperUrl,
   saveScrapers,
   type EventScraper,
 } from "@/lib/event-scrapers";
+import { useScraperGenerate } from "@/lib/use-scraper-generate";
 
 export default function EventscraperManager() {
   const [scrapers, setScrapers] = useState<EventScraper[]>([]);
@@ -24,6 +27,8 @@ export default function EventscraperManager() {
   const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<EventScraper | null>(null);
+  const [activeScraperId, setActiveScraperId] = useState<string | null>(null);
+  const { generatingId, generateSource, generateAll } = useScraperGenerate();
 
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -99,6 +104,12 @@ export default function EventscraperManager() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formOpen]);
 
+  const replaceScraper = (next: EventScraper) => {
+    setScrapers((prev) =>
+      prev.map((item) => (item.id === next.id ? next : item))
+    );
+  };
+
   const closeForm = async () => {
     const gsap = (await import("gsap")).default;
     if (!overlayRef.current || !panelRef.current) {
@@ -144,15 +155,14 @@ export default function EventscraperManager() {
       return;
     }
 
+    const source = newScraperSource(normalizedUrl);
     const next: EventScraper = {
-      id:
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: newScraperId(),
       name: trimmedName,
       url: normalizedUrl,
       createdAt: new Date().toISOString(),
       selectedFields: [],
+      sources: [source],
     };
 
     const nextList = [...scrapers, next];
@@ -200,13 +210,27 @@ export default function EventscraperManager() {
         {!ready ? (
           <p className="text-sm text-black/50">Lade …</p>
         ) : scrapers.length > 0 ? (
-          <div className="flex flex-wrap gap-4">
+          <div className="flex flex-col gap-4">
             {scrapers.map((scraper) => (
-              <ScraperCard
+              <EventscraperCard
                 key={scraper.id}
-                id={scraper.id}
-                name={scraper.name}
-                url={scraper.url}
+                scraper={scraper}
+                generatingId={
+                  activeScraperId === scraper.id ? generatingId : null
+                }
+                onChange={replaceScraper}
+                onGenerate={async (source) => {
+                  setActiveScraperId(scraper.id);
+                  const next = await generateSource(scraper.id, source);
+                  if (next) replaceScraper(next);
+                  setActiveScraperId(null);
+                }}
+                onGenerateAll={async () => {
+                  setActiveScraperId(scraper.id);
+                  const next = await generateAll(scraper);
+                  if (next) replaceScraper(next);
+                  setActiveScraperId(null);
+                }}
                 onDelete={() => setPendingDelete(scraper)}
               />
             ))}

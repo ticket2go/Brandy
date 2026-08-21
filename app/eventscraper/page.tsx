@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import EventscraperManager from "@/components/EventscraperManager";
+import EventscraperStats from "@/components/EventscraperStats";
 import Title from "@/components/Title";
 
 export default function EventscraperPage() {
@@ -14,6 +15,7 @@ export default function EventscraperPage() {
           Projekte
         </Link>
         <Title text="Eventscraper" />
+        <EventscraperStats />
       </header>
       <EventscraperManager />
     </main>

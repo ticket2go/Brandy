@@ -3,19 +3,21 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import ScraperSources from "./ScraperSources";
 import Title from "@/components/Title";
 import {
   fieldsFromUrl,
   type ProbeField,
   type ProbeGroup,
 } from "@/lib/event-scraper-fields";
-import { getScraper, updateScraper, type EventScraper } from "@/lib/event-scrapers";
 import {
-  eventFieldsFromEvents,
-  fetchEventimEvents,
-  isEventimUrl,
-  type EventimEvent,
-} from "@/lib/eventim";
+  getScraper,
+  scraperEntryCount,
+  updateScraper,
+  type EventScraper,
+} from "@/lib/event-scrapers";
+import { eventFieldsFromEvents, type EventimEvent } from "@/lib/eventim";
+import { useScraperGenerate } from "@/lib/use-scraper-generate";
 
 const GROUP_LABELS: Record<ProbeGroup, string> = {
   event: "Eventdaten",
@@ -35,89 +37,29 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
   const [scraper, setScraper] = useState<EventScraper | null>(null);
   const [ready, setReady] = useState(false);
   const [fields, setFields] = useState<ProbeField[]>([]);
-  const [events, setEvents] = useState<EventimEvent[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
+  const { generatingId, generateSource, generateAll } = useScraperGenerate();
+
+  const syncFromScraper = useCallback((next: EventScraper) => {
+    setScraper(next);
+    const events = next.sources.flatMap((source) => source.events);
+    setFields((prev) =>
+      mergeFields(
+        [
+          ...next.sources.flatMap((source) => fieldsFromUrl(source.url)),
+          ...eventFieldsFromEvents(events),
+        ],
+        prev
+      )
+    );
+  }, []);
 
   useEffect(() => {
     const found = getScraper(id);
-    setScraper(found);
     setSelected(found?.selectedFields ?? []);
-    if (found) {
-      setFields(fieldsFromUrl(found.url));
-    }
+    if (found) syncFromScraper(found);
     setReady(true);
-  }, [id]);
-
-  useEffect(() => {
-    if (!scraper) return;
-    let cancelled = false;
-
-    const run = async () => {
-      setLoading(true);
-      setError(null);
-      setWarning(null);
-      try {
-        const response = await fetch("/api/eventscraper/probe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: scraper.url }),
-        });
-        const payload = (await response.json()) as {
-          fields?: ProbeField[];
-          events?: EventimEvent[];
-          warning?: string | null;
-          error?: string;
-        };
-        if (cancelled) return;
-
-        let nextEvents = payload.events ?? [];
-        let nextFields = payload.fields ?? [];
-        let nextWarning = payload.warning ?? null;
-
-        if (
-          isEventimUrl(scraper.url) &&
-          nextEvents.length === 0
-        ) {
-          try {
-            nextEvents = await fetchEventimEvents(scraper.url);
-            nextFields = mergeFields(
-              nextFields,
-              eventFieldsFromEvents(nextEvents)
-            );
-            if (nextEvents.length > 0) nextWarning = null;
-          } catch {
-            // Browser-Fallback: wenn CORS oder Eventim blockt, Server-Warnung behalten.
-          }
-        }
-
-        if (!response.ok && nextEvents.length === 0 && nextFields.length === 0) {
-          throw new Error(payload.error ?? "URL konnte nicht gelesen werden.");
-        }
-
-        setFields((prev) => mergeFields(prev, nextFields));
-        setEvents(nextEvents);
-        setWarning(nextWarning);
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "URL konnte nicht gelesen werden."
-          );
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [scraper]);
+  }, [id, syncFromScraper]);
 
   const persistSelection = useCallback(
     (next: string[]) => {
@@ -174,6 +116,9 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
     );
   }
 
+  const total = scraperEntryCount(scraper);
+  const busy = generatingId !== null;
+
   return (
     <main className="relative flex min-h-screen w-full flex-col items-stretch justify-start gap-12 py-16">
       <header className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-6">
@@ -188,74 +133,58 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
           <span>/</span>
           <span className="text-black/70">{scraper.name}</span>
         </nav>
-        <Title text={scraper.name} />
-        <p className="truncate text-sm text-black/50" title={scraper.url}>
-          {scraper.url}
-        </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <Title text={scraper.name} />
+            <p className="mt-2 text-sm text-black/60">
+              {total === 1
+                ? "1 Eintrag gescraped"
+                : `${total} Einträge gescraped`}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              const next = await generateAll(scraper);
+              if (next) syncFromScraper(next);
+            }}
+            disabled={busy}
+            className="rounded-full bg-black px-6 py-3 text-sm font-semibold text-white transition enabled:hover:bg-black/85 disabled:opacity-50"
+          >
+            {busy ? "Generiert …" : "Generieren"}
+          </button>
+        </div>
       </header>
 
-      <section className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6">
-        {loading && (
-          <p className="text-sm text-black/50">Lese Eventdaten …</p>
-        )}
-
-        {error && (
-          <p
-            role="alert"
-            className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-          >
-            {error}
+      <section className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6">
+        <div className="flex flex-col gap-3">
+          <h2 className="text-2xl font-semibold tracking-tight text-black">
+            Links
+          </h2>
+          <p className="text-sm text-black/55">
+            Weitere Suchlinks hinzufügen und pro Link separat generieren.
           </p>
-        )}
+          <ScraperSources
+            scraper={scraper}
+            generatingId={generatingId}
+            onChange={syncFromScraper}
+            onGenerate={async (source) => {
+              const next = await generateSource(scraper.id, source);
+              if (next) syncFromScraper(next);
+            }}
+          />
+        </div>
 
-        {warning && !error && (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {warning}
-          </p>
-        )}
-
-        {events.length > 0 && (
-          <div className="flex flex-col gap-3">
-            <h2 className="text-2xl font-semibold tracking-tight text-black">
-              Datenfeed
-            </h2>
-            <p className="text-sm text-black/55">
-              Gefundene Events mit Bild, Name, Location und Datum.
-            </p>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {events.map((event, index) => (
-                <article
-                  key={`${event.url ?? event.name}-${index}`}
-                  className="overflow-hidden rounded-2xl bg-black text-white"
-                >
-                  {event.image ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={event.image}
-                      alt=""
-                      className="h-36 w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-36 items-center justify-center bg-white/5 text-xs text-white/40">
-                      Kein Bild
-                    </div>
-                  )}
-                  <div className="flex flex-col gap-1 p-4">
-                    <h3 className="text-base font-semibold tracking-tight">
-                      {event.name}
-                    </h3>
-                    <p className="text-[12px] text-white/60">
-                      {event.location || "Keine Location"}
-                    </p>
-                    <p className="text-[12px] text-white/60">
-                      {formatEventDate(event.date) ?? "Kein Datum"}
-                    </p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        )}
+        {scraper.sources.map((source) => (
+          <SourceFeed
+            key={source.id}
+            url={source.url}
+            events={source.events}
+            count={source.entryCount}
+            error={source.error}
+            generating={generatingId === source.id}
+          />
+        ))}
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -263,7 +192,7 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
               Voreinstellungen
             </h2>
             <p className="mt-1 text-sm text-black/55">
-              Wähle die Eventdaten, die später gescraped werden sollen.
+              Wähle die Eventdaten, die gescraped werden sollen.
             </p>
           </div>
           <p className="text-sm text-black/50">
@@ -273,9 +202,9 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
           </p>
         </div>
 
-        {!loading && fields.length === 0 && !error ? (
+        {fields.length === 0 ? (
           <p className="text-sm text-black/50">
-            Auf dieser URL wurden noch keine scrapbaren Parameter gefunden.
+            Nach dem Generieren erscheinen hier die gefundenen Felder.
           </p>
         ) : null}
 
@@ -329,6 +258,86 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
         ))}
       </section>
     </main>
+  );
+}
+
+function SourceFeed({
+  url,
+  events,
+  count,
+  error,
+  generating,
+}: {
+  url: string;
+  events: EventimEvent[];
+  count: number;
+  error: string | null;
+  generating: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <h2 className="text-2xl font-semibold tracking-tight text-black">
+          Datenfeed
+        </h2>
+        <p className="mt-1 truncate text-sm text-black/50" title={url}>
+          {url}
+        </p>
+        <p className="mt-1 text-sm text-black/60">
+          {generating
+            ? "Generiert …"
+            : count === 1
+              ? "1 Eintrag gescraped"
+              : `${count} Einträge gescraped`}
+        </p>
+      </div>
+      {error && (
+        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+      {events.length > 0 ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {events.map((event, index) => (
+            <article
+              key={`${event.url ?? event.name}-${index}`}
+              className="overflow-hidden rounded-2xl bg-black text-white"
+            >
+              {event.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={event.image}
+                  alt=""
+                  className="h-36 w-full object-cover"
+                />
+              ) : (
+                <div className="flex h-36 items-center justify-center bg-white/5 text-xs text-white/40">
+                  Kein Bild
+                </div>
+              )}
+              <div className="flex flex-col gap-1 p-4">
+                <h3 className="text-base font-semibold tracking-tight">
+                  {event.name}
+                </h3>
+                <p className="text-[12px] text-white/60">
+                  {event.location || "Keine Location"}
+                </p>
+                <p className="text-[12px] text-white/60">
+                  {formatEventDate(event.date) ?? "Kein Datum"}
+                </p>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        !generating &&
+        !error && (
+          <p className="text-sm text-black/50">
+            Noch keine Einträge. Starte das Scraping mit Generieren.
+          </p>
+        )
+      )}
+    </div>
   );
 }
 
