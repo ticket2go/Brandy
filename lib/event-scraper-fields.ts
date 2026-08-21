@@ -17,7 +17,7 @@ const FIELD_LABELS: Record<string, string> = {
   enddate: "Enddatum",
   date: "Datum",
   datetime: "Datum",
-  location: "Ort",
+  location: "Location",
   address: "Adresse",
   city: "Stadt",
   venue: "Venue",

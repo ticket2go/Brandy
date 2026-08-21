@@ -220,7 +220,7 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
               Datenfeed
             </h2>
             <p className="text-sm text-black/55">
-              Gefundene Events mit Name, Datum und Bild.
+              Gefundene Events mit Bild, Name, Location und Datum.
             </p>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {events.map((event, index) => (
@@ -245,9 +245,10 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
                       {event.name}
                     </h3>
                     <p className="text-[12px] text-white/60">
-                      {[formatEventDate(event.date), event.venue, event.city]
-                        .filter(Boolean)
-                        .join(" · ") || "Kein Datum"}
+                      {event.location || "Keine Location"}
+                    </p>
+                    <p className="text-[12px] text-white/60">
+                      {formatEventDate(event.date) ?? "Kein Datum"}
                     </p>
                   </div>
                 </article>

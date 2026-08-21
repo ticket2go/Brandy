@@ -49,6 +49,9 @@ export async function probeScraperUrl(rawUrl: string): Promise<ProbeResult> {
     try {
       events = await fetchEventimEvents(url);
       addFields(fields, eventFieldsFromEvents(events));
+      if (events.length === 0) {
+        warnings.push("Zu dieser Suche wurden keine Events gefunden.");
+      }
     } catch (error) {
       addFields(fields, eventFieldsFromEvents([]));
       warnings.push(
@@ -57,17 +60,15 @@ export async function probeScraperUrl(rawUrl: string): Promise<ProbeResult> {
           : "Eventim-Eventdaten konnten nicht geladen werden."
       );
     }
-  }
-
-  try {
-    const { body, contentType } = await fetchWithLimits(url);
-    if (looksLikeJson(contentType, body)) {
-      addFields(fields, collectJsonFields(body, "jsonld"));
-    } else {
-      addFields(fields, collectHtmlFields(body, parsed));
-    }
-  } catch (error) {
-    if (events.length === 0) {
+  } else {
+    try {
+      const { body, contentType } = await fetchWithLimits(url);
+      if (looksLikeJson(contentType, body)) {
+        addFields(fields, collectJsonFields(body, "jsonld"));
+      } else {
+        addFields(fields, collectHtmlFields(body, parsed));
+      }
+    } catch (error) {
       warnings.push(
         error instanceof Error
           ? error.message
