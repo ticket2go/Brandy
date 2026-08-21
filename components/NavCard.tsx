@@ -12,7 +12,7 @@ type NavItem = {
 };
 
 const primaryItems: NavItem[] = [
-  { label: "Brands", href: "/#brands" },
+  { label: "Brands", href: "/brandy#brands" },
   { label: "Design Manuals", href: "/design-manuals" },
   { label: "Ecosystem", href: "/ecosystem" },
   { label: "QR-Code Generator", href: "/qr-code-generator" },
@@ -21,7 +21,7 @@ const primaryItems: NavItem[] = [
 export default function NavCard() {
   const pathname = usePathname();
   const router = useRouter();
-  const isHome = pathname === "/";
+  const isHome = pathname === "/brandy";
   const [open, setOpen] = useState(isHome);
   const {
     user,
