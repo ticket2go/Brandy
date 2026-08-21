@@ -33,8 +33,8 @@ const WEB_IDS: Record<string, string> = {
 };
 
 const REQUEST_TIMEOUT_MS = 9000;
-const MAX_HITS = 25;
-const FOLLOW_UP_CONCURRENCY = 3;
+const MAX_HITS = 50;
+const FOLLOW_UP_CONCURRENCY = 4;
 
 export function isEventimUrl(rawUrl: string): boolean {
   try {
@@ -98,7 +98,7 @@ async function fetchSearchHits(pageUrl: URL): Promise<SearchHit[]> {
 }
 
 async function fetchSearchHitsFromHtml(pageUrl: URL): Promise<SearchHit[]> {
-  const html = await fetchHtml(pageUrl.toString(), pageUrl);
+  const html = await fetchHtml(pageUrl.toString());
   if (!html) return [];
   const parsed = parseEventimPage(html, pageUrl.toString());
   const hits: SearchHit[] = [];
@@ -170,23 +170,23 @@ async function fetchFollowUpEvents(
   hit: SearchHit,
   pageUrl: URL
 ): Promise<ScrapedEvent[]> {
-  const [apiEvents, pageEvents] = await Promise.all([
-    hit.productGroupId
-      ? fetchProductGroupEvents(hit.productGroupId, pageUrl)
-      : Promise.resolve([]),
-    fetchFollowUpPage(hit, pageUrl),
-  ]);
+  if (hit.productGroupId) {
+    const events = await fetchProductGroupEvents(hit.productGroupId, pageUrl);
+    if (events.length > 0) return events.map((event) => withHitData(event, hit));
+  }
 
-  const merged = mergeByTermin(apiEvents, pageEvents);
-  const withHero = merged.map((event) => ({
+  const page = await fetchFollowUpPage(hit, pageUrl);
+  return page.events.map((event) =>
+    withHitData({ ...event, heroImage: event.heroImage ?? page.heroImage }, hit)
+  );
+}
+
+function withHitData(event: ScrapedEvent, hit: SearchHit): ScrapedEvent {
+  return {
     ...event,
     name: event.name || hit.name,
-    heroImage: event.heroImage ?? pageEvents.heroImage ?? hit.image,
-  }));
-
-  if (withHero.length > 0) return withHero;
-  if (!pageEvents.heroImage && !hit.image) return [];
-  return [];
+    heroImage: event.heroImage ?? hit.image,
+  };
 }
 
 type FollowUpPage = {
@@ -213,7 +213,7 @@ async function fetchFollowUpPage(
     if (!next || visited.has(next)) continue;
     visited.add(next);
 
-    const html = await fetchHtml(next, pageUrl);
+    const html = await fetchHtml(next);
     if (!html) continue;
     const parsed = parseEventimPage(html, next);
     heroImage = heroImage ?? parsed.heroImage;
@@ -281,11 +281,14 @@ function eventsFromProducts(payload: unknown, origin: string): ScrapedEvent[] {
 
 function priceOf(product: Record<string, unknown>): string | null {
   const from = asNumber(
-    nested(product, ["priceRange", "min"]) ??
-      nested(product, ["price", "min"]) ??
-      product.minPrice ??
-      product.priceFrom
-  );
+    typeof product.price === "number" ? product.price : undefined
+  ) ??
+    asNumber(
+      nested(product, ["priceRange", "min"]) ??
+        nested(product, ["price", "min"]) ??
+        product.minPrice ??
+        product.priceFrom
+    );
   const to = asNumber(
     nested(product, ["priceRange", "max"]) ??
       nested(product, ["price", "max"]) ??
@@ -296,42 +299,6 @@ function priceOf(product: Record<string, unknown>): string | null {
     asString(nested(product, ["price", "currency"])) ??
     asString(product.currency);
   return formatPrice(from, to, currency);
-}
-
-function mergeByTermin(
-  primary: ScrapedEvent[],
-  fallback: FollowUpPage
-): ScrapedEvent[] {
-  if (primary.length === 0) return fallback.events;
-
-  const extras = new Map<string, ScrapedEvent>();
-  for (const event of fallback.events) {
-    extras.set(terminKey(event), event);
-  }
-
-  const merged = primary.map((event) => {
-    const extra = extras.get(terminKey(event));
-    if (!extra) return event;
-    return {
-      ...event,
-      venue: event.venue ?? extra.venue,
-      city: event.city ?? extra.city,
-      location: event.location ?? extra.location,
-      heroImage: event.heroImage ?? extra.heroImage,
-      ticketUrl: event.ticketUrl ?? extra.ticketUrl,
-      price: event.price ?? extra.price,
-    };
-  });
-
-  const known = new Set(merged.map((event) => terminKey(event)));
-  for (const event of fallback.events) {
-    if (!known.has(terminKey(event))) merged.push(event);
-  }
-  return merged;
-}
-
-function terminKey(event: ScrapedEvent): string {
-  return `${(event.startsAt ?? "").slice(0, 10)}|${(event.city ?? "").toLowerCase()}`;
 }
 
 function withDisplayFields(event: ScrapedEvent): ScrapedEvent {
@@ -387,7 +354,7 @@ async function fetchJson(
 ): Promise<unknown> {
   const response = await fetch(`${endpoint}?${params.toString()}`, {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    headers: headers(pageUrl),
+    headers: apiHeaders(pageUrl),
   });
   const body = await response.text();
   if (!response.ok || /access denied|permission to access/i.test(body)) {
@@ -404,15 +371,12 @@ async function fetchJson(
   }
 }
 
-async function fetchHtml(url: string, pageUrl: URL): Promise<string | null> {
+async function fetchHtml(url: string): Promise<string | null> {
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       redirect: "follow",
-      headers: {
-        ...headers(pageUrl),
-        accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
-      },
+      headers: pageHeaders(),
     });
     if (!response.ok) return null;
     return await response.text();
@@ -421,14 +385,43 @@ async function fetchHtml(url: string, pageUrl: URL): Promise<string | null> {
   }
 }
 
-function headers(pageUrl: URL): Record<string, string> {
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+
+// Eventim liegt hinter einem Bot-Schutz, der Requests ohne Client-Hints
+// und Sec-Fetch-Header mit 403 abweist.
+function clientHintHeaders(): Record<string, string> {
   return {
+    "sec-ch-ua": '"Chromium";v="128", "Not(A:Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
+    "user-agent": USER_AGENT,
+  };
+}
+
+function apiHeaders(pageUrl: URL): Record<string, string> {
+  return {
+    ...clientHintHeaders(),
     accept: "application/json, text/plain, */*",
     "accept-language": "de-DE,de;q=0.9,en;q=0.8",
     origin: pageUrl.origin,
     referer: `${pageUrl.origin}/`,
-    "user-agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+  };
+}
+
+function pageHeaders(): Record<string, string> {
+  return {
+    ...clientHintHeaders(),
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "de-DE,de;q=0.9,en;q=0.8",
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "none",
+    "sec-fetch-user": "?1",
+    "upgrade-insecure-requests": "1",
   };
 }
 
