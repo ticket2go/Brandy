@@ -117,7 +117,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
           </p>
         ) : (
           <div className="overflow-x-auto rounded-2xl border border-black/10">
-            <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
               <thead className="bg-black/[0.04] text-[10px] uppercase tracking-[0.12em] text-black/45">
                 <tr>
                   <th className="px-4 py-3 font-medium">Eventname</th>
@@ -126,7 +126,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
                   <th className="px-4 py-3 font-medium">Uhrzeit</th>
                   <th className="px-4 py-3 font-medium">Eventherobild</th>
                   <th className="px-4 py-3 font-medium">Ticketlink</th>
-                  <th className="px-4 py-3 font-medium">Preis</th>
+                  <th className="px-4 py-3 text-right font-medium">Preis</th>
                 </tr>
               </thead>
               <tbody>
@@ -139,37 +139,21 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
                     <td className="px-4 py-3 text-black/70">
                       {event.location ?? "—"}
                     </td>
-                    <td className="px-4 py-3 text-black/70">{event.date ?? "—"}</td>
-                    <td className="px-4 py-3 text-black/70">{event.time ?? "—"}</td>
-                    <td className="px-4 py-3">
-                      {event.heroImage ? (
-                        <a
-                          href={event.heroImage}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="break-all text-black/60 underline decoration-black/20 hover:decoration-black"
-                        >
-                          {event.heroImage}
-                        </a>
-                      ) : (
-                        <span className="text-black/40">—</span>
-                      )}
+                    <td className="whitespace-nowrap px-4 py-3 text-black/70">
+                      {event.date ?? "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-black/70">
+                      {event.time ?? "—"}
                     </td>
                     <td className="px-4 py-3">
-                      {event.ticketUrl ? (
-                        <a
-                          href={event.ticketUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="break-all text-black/60 underline decoration-black/20 hover:decoration-black"
-                        >
-                          {event.ticketUrl}
-                        </a>
-                      ) : (
-                        <span className="text-black/40">—</span>
-                      )}
+                      <UrlCell url={event.heroImage} />
                     </td>
-                    <td className="px-4 py-3 text-black/70">{event.price ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      <UrlCell url={event.ticketUrl} />
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-black/70">
+                      {event.price ?? "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -178,5 +162,20 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
         )}
       </section>
     </main>
+  );
+}
+
+function UrlCell({ url }: { url: string | null }) {
+  if (!url) return <span className="text-black/40">—</span>;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title={url}
+      className="block max-w-[7.5rem] truncate text-black/60 underline decoration-black/20 hover:decoration-black"
+    >
+      {url}
+    </a>
   );
 }
