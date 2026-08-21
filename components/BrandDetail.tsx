@@ -648,7 +648,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
           Die Brand „{slug}“ existiert nicht (mehr).
         </p>
         <Link
-          href="/"
+          href="/brandy"
           className="w-fit rounded-xl bg-black px-4 py-2 text-sm text-white hover:bg-black/85"
         >
           Zur Startseite
@@ -687,7 +687,7 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
     <section className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6">
       <header className="flex flex-col gap-4">
         <nav className="flex items-center gap-2 text-xs uppercase tracking-widest text-black/40">
-          <Link href="/" className="hover:text-black">
+          <Link href="/brandy" className="hover:text-black">
             Brands
           </Link>
           <span>/</span>
