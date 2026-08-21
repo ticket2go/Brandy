@@ -38,6 +38,9 @@ export async function POST(request: Request) {
           error instanceof Error
             ? `URL konnte nicht gelesen werden: ${error.message}`
             : "URL konnte nicht gelesen werden.",
+        fields: [],
+        events: [],
+        warning: null,
       },
       { status: 502 }
     );

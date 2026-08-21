@@ -1,4 +1,4 @@
-export type ProbeGroup = "param" | "meta" | "jsonld" | "page";
+export type ProbeGroup = "event" | "param" | "meta" | "jsonld" | "page";
 
 export type ProbeField = {
   key: string;

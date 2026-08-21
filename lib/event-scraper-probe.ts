@@ -5,6 +5,12 @@ import {
   type ProbeField,
   type ProbeGroup,
 } from "@/lib/event-scraper-fields";
+import {
+  eventFieldsFromEvents,
+  fetchEventimEvents,
+  isEventimUrl,
+  type EventimEvent,
+} from "@/lib/eventim";
 
 export type { ProbeField, ProbeGroup };
 export { fieldsFromUrl };
@@ -14,10 +20,12 @@ export type ProbeResult = {
   hostname: string;
   title: string | null;
   fields: ProbeField[];
+  events: EventimEvent[];
+  warning: string | null;
 };
 
 const MAX_FETCH_BYTES = 2_000_000;
-const FETCH_TIMEOUT_MS = 12_000;
+const FETCH_TIMEOUT_MS = 4000;
 const MAX_FIELDS = 80;
 const MAX_SAMPLE = 160;
 const USER_AGENT =
@@ -26,23 +34,51 @@ const USER_AGENT =
 const SKIP_KEY =
   /token|password|secret|cookie|authorization|api[_-]?key|csrf|nonce|session/i;
 
-const GROUP_ORDER: ProbeGroup[] = ["param", "jsonld", "meta", "page"];
+const GROUP_ORDER: ProbeGroup[] = ["event", "param", "jsonld", "meta", "page"];
 
 export async function probeScraperUrl(rawUrl: string): Promise<ProbeResult> {
   const url = validatePublicUrl(rawUrl);
   const parsed = new URL(url);
-  const { body, contentType } = await fetchWithLimits(url);
   const fields = new Map<string, ProbeField>();
+  const warnings: string[] = [];
+  let events: EventimEvent[] = [];
 
   addFields(fields, fieldsFromUrl(url));
 
-  if (looksLikeJson(contentType, body)) {
-    addFields(fields, collectJsonFields(body, "jsonld"));
-  } else {
-    addFields(fields, collectHtmlFields(body, parsed));
+  if (isEventimUrl(url)) {
+    try {
+      events = await fetchEventimEvents(url);
+      addFields(fields, eventFieldsFromEvents(events));
+    } catch (error) {
+      addFields(fields, eventFieldsFromEvents([]));
+      warnings.push(
+        error instanceof Error
+          ? error.message
+          : "Eventim-Eventdaten konnten nicht geladen werden."
+      );
+    }
+  }
+
+  try {
+    const { body, contentType } = await fetchWithLimits(url);
+    if (looksLikeJson(contentType, body)) {
+      addFields(fields, collectJsonFields(body, "jsonld"));
+    } else {
+      addFields(fields, collectHtmlFields(body, parsed));
+    }
+  } catch (error) {
+    if (events.length === 0) {
+      warnings.push(
+        error instanceof Error
+          ? error.message
+          : "URL konnte nicht gelesen werden."
+      );
+    }
   }
 
   const title =
+    events[0]?.name ??
+    fields.get("event.name")?.sample ??
     fields.get("meta.title")?.sample ??
     fields.get("jsonld.name")?.sample ??
     null;
@@ -52,6 +88,8 @@ export async function probeScraperUrl(rawUrl: string): Promise<ProbeResult> {
     hostname: parsed.hostname,
     title,
     fields: sortFields(Array.from(fields.values())).slice(0, MAX_FIELDS),
+    events,
+    warning: warnings[0] ?? null,
   };
 }
 
