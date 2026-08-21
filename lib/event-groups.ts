@@ -1,4 +1,8 @@
-import { uniqueCities } from "@/lib/eventim-detail";
+import {
+  artistPageUrlFromEventimUrl,
+  artistSlugFromUrl,
+  uniqueCities,
+} from "@/lib/eventim-detail";
 import { productGroupIdFromUrl, type EventimEvent } from "@/lib/eventim";
 import { slugify } from "@/lib/slugify";
 
@@ -13,6 +17,9 @@ export type EventGroup = {
 };
 
 export function eventGroupKey(event: EventimEvent): string {
+  if (event.groupKey) return event.groupKey;
+  const slug = artistSlugFromUrl(event.tourUrl ?? event.url ?? "");
+  if (slug) return `artist-${slug}`;
   const groupId =
     event.productGroupId ??
     productGroupIdFromUrl(event.tourUrl ?? event.url ?? "");
@@ -46,6 +53,11 @@ export function groupEvents(events: EventimEvent[]): EventGroup[] {
       ),
       dates,
       tourUrl:
+        artistPageUrlFromEventimUrl(
+          dates.find((item) => item.tourUrl)?.tourUrl ??
+            dates.find((item) => item.url)?.url ??
+            ""
+        ) ??
         dates.find((item) => item.tourUrl)?.tourUrl ??
         dates.find((item) => item.url)?.url ??
         null,
@@ -63,13 +75,25 @@ export function findEventGroup(
 export function withTourUrl(
   events: EventimEvent[],
   tourUrl: string | null,
-  productGroupId?: string | null
+  productGroupId?: string | null,
+  groupKey?: string | null
 ): EventimEvent[] {
+  const followUp = tourUrl ? artistPageUrlFromEventimUrl(tourUrl) ?? tourUrl : null;
   return events.map((event) => ({
     ...event,
-    tourUrl: event.tourUrl ?? tourUrl,
+    tourUrl: followUp ?? event.tourUrl ?? tourUrl,
     productGroupId: event.productGroupId ?? productGroupId ?? null,
+    groupKey: groupKey ?? event.groupKey ?? null,
   }));
+}
+
+export function followUpUrlFromGroup(group: EventGroup): string | null {
+  return (
+    artistPageUrlFromEventimUrl(group.tourUrl ?? group.dates[0]?.url ?? "") ??
+    group.tourUrl ??
+    group.dates[0]?.url ??
+    null
+  );
 }
 
 function normalizeKeyUrl(url: string | null | undefined): string | null {

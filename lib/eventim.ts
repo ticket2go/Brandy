@@ -1,5 +1,8 @@
 import type { ProbeField } from "@/lib/event-scraper-fields";
 import {
+  artistPageUrlFromEventimUrl,
+  artistSlugFromUrl,
+  isArtistListingUrl,
   isEventimTourUrl,
   parseEventimDetailHtml,
   productGroupIdFromUrl,
@@ -19,9 +22,17 @@ export type EventimEvent = {
   url: string | null;
   tourUrl?: string | null;
   productGroupId?: string | null;
+  groupKey?: string | null;
+  extras?: Record<string, string>;
 };
 
-export { productGroupIdFromUrl, isEventimTourUrl };
+export {
+  artistPageUrlFromEventimUrl,
+  artistSlugFromUrl,
+  isArtistListingUrl,
+  productGroupIdFromUrl,
+  isEventimTourUrl,
+};
 
 const PRODUCTS_URL =
   "https://public-api.eventim.com/websearch/search/api/exploration/v1/products";
@@ -112,6 +123,13 @@ export function eventFieldsFromEvents(events: EventimEvent[]): ProbeField[] {
       group: "event",
       sample: cities.length > 0 ? cities.join(", ") : first?.city ?? null,
     },
+    {
+      key: "event.url",
+      label: "URL",
+      group: "event",
+      sample: first?.url ?? first?.tourUrl ?? null,
+    },
+    ...extrasAsFields(first?.extras),
   ];
 }
 
@@ -120,6 +138,9 @@ export async function fetchEventimEvents(
   timeoutMs = SEARCH_TIMEOUT_MS
 ): Promise<EventimEvent[]> {
   const pageUrl = new URL(rawUrl);
+  if (isArtistListingUrl(rawUrl)) {
+    return fetchArtistListing(pageUrl, timeoutMs);
+  }
   const groupId = productGroupIdFromUrl(rawUrl);
   if (groupId) {
     return expandProductGroup(groupId, pageUrl, rawUrl);
@@ -127,6 +148,93 @@ export async function fetchEventimEvents(
 
   const events = await fetchSearchEvents(pageUrl, timeoutMs);
   return expandSearchEvents(events, pageUrl);
+}
+
+async function fetchArtistListing(
+  pageUrl: URL,
+  timeoutMs: number
+): Promise<EventimEvent[]> {
+  const artistUrl = artistPageUrlFromEventimUrl(pageUrl.toString()) ?? pageUrl.toString();
+  const slug = artistSlugFromUrl(artistUrl);
+  const groupKey = slug ? `artist-${slug}` : null;
+
+  const [pageDetail, searchEvents] = await Promise.all([
+    fetchDetailPage(artistUrl, pageUrl),
+    fetchSearchEvents(pageUrl, timeoutMs).then((events) =>
+      slug ? events.filter((event) => belongsToArtist(event, slug)) : events
+    ),
+  ]);
+
+  let dates =
+    searchEvents.length > 0
+      ? await expandSearchEvents(searchEvents, pageUrl)
+      : [];
+  if (dates.length === 0) {
+    dates = detailEventsToEvents(pageDetail.events, pageDetail.name);
+  }
+  if (dates.length === 0 && pageDetail.nextData) {
+    dates = eventsFromUnknown(pageDetail.nextData, pageUrl.origin);
+  }
+  if (slug) {
+    dates = dates.filter((event) => belongsToArtist(event, slug));
+  }
+
+  const cities = uniqueCities(
+    dates.map((event) => event.city),
+    dates.flatMap((event) => event.cities ?? []),
+    pageDetail.cities
+  );
+  const hero =
+    pageDetail.heroImage ??
+    dates.find((event) => event.heroImage)?.heroImage ??
+    dates.find((event) => event.image)?.image ??
+    null;
+  const extras = {
+    ...(pageDetail.name ? { Artist: pageDetail.name } : {}),
+    Folgeseite: artistUrl,
+  };
+
+  if (dates.length === 0) {
+    if (!pageDetail.name && !hero && cities.length === 0) return [];
+    return [
+      normalizeEvent({
+        name: pageDetail.name ?? slug ?? "Artist",
+        date: pageDetail.date,
+        image: hero,
+        heroImage: hero,
+        location: pageDetail.location,
+        venue: pageDetail.venue,
+        city: pageDetail.city ?? cities[0] ?? null,
+        cities,
+        url: artistUrl,
+        tourUrl: artistUrl,
+        groupKey,
+        extras,
+      }),
+    ];
+  }
+
+  return dates.map((event) =>
+    normalizeEvent({
+      ...event,
+      image: event.image ?? hero,
+      heroImage: hero ?? event.heroImage ?? event.image,
+      cities: uniqueCities(event.cities, event.city, cities),
+      tourUrl: artistUrl,
+      groupKey: groupKey ?? event.groupKey,
+      extras: { ...extras, ...event.extras },
+    })
+  );
+}
+
+function belongsToArtist(event: EventimEvent, slug: string): boolean {
+  const hay = `${event.url ?? ""} ${event.tourUrl ?? ""}`.toLowerCase();
+  if (hay.includes(`/artist/${slug}`) || hay.includes(`/attraction/${slug}`)) {
+    return true;
+  }
+  const artistName = slug.replace(/-/g, " ");
+  const name = event.name.toLowerCase();
+  return name === artistName || name.startsWith(`${artistName} `);
 }
 
 async function fetchSearchEvents(
@@ -255,7 +363,7 @@ async function expandProductGroup(
         city: pageDetail.city ?? cities[0] ?? null,
         cities,
         url: pageHref,
-        tourUrl: pageHref,
+        tourUrl: artistPageUrlFromEventimUrl(pageHref) ?? pageHref,
         productGroupId: groupId,
       }),
     ];
@@ -269,7 +377,7 @@ async function expandProductGroup(
       heroImage: hero ?? event.heroImage ?? event.image,
       cities,
       url: event.url ?? pageHref,
-      tourUrl: pageHref,
+      tourUrl: artistPageUrlFromEventimUrl(pageHref) ?? pageHref,
       productGroupId: groupId,
     })
   );
@@ -298,7 +406,7 @@ async function enrichEventFromPage(
       formatLocation(event.venue ?? detail.venue, event.city ?? detail.city),
     cities,
     url: href,
-    tourUrl: event.tourUrl ?? href,
+    tourUrl: artistPageUrlFromEventimUrl(href) ?? event.tourUrl ?? href,
   });
 }
 
@@ -519,8 +627,9 @@ function parseEventimItem(
     city,
     cities: uniqueCities(city),
     url: link,
-    tourUrl: link,
+    tourUrl: (link && artistPageUrlFromEventimUrl(link)) || link,
     productGroupId: productGroupIdFromProduct(product),
+    extras: extrasFromProduct(product),
   });
 }
 
@@ -623,9 +732,58 @@ function normalizeEvent(event: EventimEvent): EventimEvent {
     city: event.city ?? cities[0] ?? null,
     cities,
     url: event.url ?? null,
-    tourUrl: event.tourUrl ?? event.url ?? null,
+    tourUrl:
+      artistPageUrlFromEventimUrl(event.tourUrl ?? event.url ?? "") ??
+      event.tourUrl ??
+      event.url ??
+      null,
     productGroupId: event.productGroupId ?? null,
+    groupKey: event.groupKey ?? null,
+    extras: event.extras ?? {},
   };
+}
+
+function extrasFromProduct(product: Record<string, unknown>): Record<string, string> {
+  const extras: Record<string, string> = {};
+  const put = (label: string, value: unknown) => {
+    const text = asString(value);
+    if (text) extras[label] = text;
+  };
+  put("Status", product.status);
+  put("Produkt-ID", product.productId ?? product.id);
+  put("Beschreibung", product.description ?? product.shortDescription);
+  const categories = product.categories;
+  if (Array.isArray(categories)) {
+    const names = categories
+      .map((item) => asString(asRecord(item)?.name))
+      .filter((item): item is string => Boolean(item));
+    if (names.length > 0) extras.Kategorie = names.join(", ");
+  }
+  const attractions = product.attractions;
+  if (Array.isArray(attractions)) {
+    const names = attractions
+      .map((item) => asString(asRecord(item)?.name))
+      .filter((item): item is string => Boolean(item));
+    if (names.length > 0) extras.Attraction = names.join(", ");
+  }
+  const rating = asRecord(product.rating);
+  if (rating) {
+    put("Bewertung", rating.average ?? rating.value);
+    put("Bewertungen", rating.count);
+  }
+  return extras;
+}
+
+function extrasAsFields(extras?: Record<string, string>): ProbeField[] {
+  if (!extras) return [];
+  return Object.entries(extras)
+    .filter(([, value]) => value)
+    .map(([label, sample]) => ({
+      key: `event.${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      label,
+      group: "event" as const,
+      sample,
+    }));
 }
 
 function dedupeEvents(events: EventimEvent[]): EventimEvent[] {

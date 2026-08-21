@@ -4,14 +4,16 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import Title from "@/components/Title";
-import { formatEventDay } from "@/lib/event-format";
+import { eventDataRows, formatEventDay } from "@/lib/event-format";
 import {
+  followUpUrlFromGroup,
   eventGroupKey,
   findEventGroup,
   withTourUrl,
   type EventGroup,
 } from "@/lib/event-groups";
 import { scrapeEventsFromUrl } from "@/lib/event-scraper-run";
+import type { ProbeField } from "@/lib/event-scraper-fields";
 import {
   getScraper,
   updateScraperSource,
@@ -30,6 +32,8 @@ export default function EventscraperEventDetail({
 }: EventscraperEventDetailProps) {
   const [scraper, setScraper] = useState<EventScraper | null>(null);
   const [group, setGroup] = useState<EventGroup | null>(null);
+  const [fields, setFields] = useState<ProbeField[]>([]);
+  const [followUpUrl, setFollowUpUrl] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,25 +77,32 @@ export default function EventscraperEventDetail({
         break;
       }
     }
-    if (!foundSource || !foundGroup?.tourUrl) return;
+    const targetUrl = foundGroup ? followUpUrlFromGroup(foundGroup) : null;
+    if (!foundSource || !foundGroup || !targetUrl) return;
 
     let cancelled = false;
-    const tourUrl = foundGroup.tourUrl;
     const productGroupId = foundGroup.dates[0]?.productGroupId ?? null;
     const sourceId = foundSource.id;
     const existing = foundSource.events;
+    setFollowUpUrl(targetUrl);
 
     const loadFollowUp = async () => {
       setLoading(true);
       setError(null);
       try {
-        const result = await scrapeEventsFromUrl(tourUrl);
+        const result = await scrapeEventsFromUrl(targetUrl);
         if (cancelled) return;
+        setFields(result.fields);
         if (result.events.length === 0) {
           if (result.error) setError(result.error);
           return;
         }
-        const incoming = withTourUrl(result.events, tourUrl, productGroupId);
+        const incoming = withTourUrl(
+          result.events,
+          targetUrl,
+          productGroupId,
+          eventId
+        );
         const kept = existing.filter(
           (event) => eventGroupKey(event) !== eventId
         );
@@ -158,6 +169,7 @@ export default function EventscraperEventDetail({
   const dates = [...group.dates].sort((a, b) =>
     (a.date ?? "").localeCompare(b.date ?? "")
   );
+  const pageRows = fields.filter((field) => field.sample);
 
   return (
     <main className="relative flex min-h-screen w-full flex-col items-stretch justify-start gap-12 py-16">
@@ -178,12 +190,17 @@ export default function EventscraperEventDetail({
           <span className="text-black/70">{group.name}</span>
         </nav>
         <Title text={group.name} />
+        {followUpUrl ? (
+          <p className="truncate text-sm text-black/50" title={followUpUrl}>
+            Folgeseite: {followUpUrl}
+          </p>
+        ) : null}
         <p className="text-sm text-black/60">
           {loading
             ? "Lädt Folgeseite …"
             : dates.length === 1
-              ? "1 Termin von der Folgeseite"
-              : `${dates.length} Termine von der Folgeseite`}
+              ? "1 Datensatz von der Folgeseite"
+              : `${dates.length} Datensätze von der Folgeseite`}
         </p>
       </header>
 
@@ -206,6 +223,46 @@ export default function EventscraperEventDetail({
             {error}
           </p>
         ) : null}
+
+        <div className="flex flex-col gap-3">
+          <h2 className="text-2xl font-semibold tracking-tight text-black">
+            Alle Daten
+          </h2>
+          {pageRows.length > 0 ? (
+            <dl className="grid gap-3 sm:grid-cols-2">
+              {pageRows.map((field) => (
+                <div
+                  key={field.key}
+                  className="rounded-2xl bg-black/[0.04] px-4 py-3"
+                >
+                  <dt className="text-[10px] font-medium uppercase tracking-[0.12em] text-black/40">
+                    {field.label}
+                  </dt>
+                  <dd className="mt-1 break-words text-sm text-black">
+                    {field.key.includes("image") && field.sample ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={field.sample}
+                        alt=""
+                        className="mt-1 h-16 w-16 rounded-lg object-cover"
+                      />
+                    ) : field.key === "event.date" ? (
+                      formatEventDay(field.sample) ?? field.sample
+                    ) : (
+                      field.sample
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="text-sm text-black/50">
+              {loading
+                ? "Daten werden geladen …"
+                : "Noch keine Felder von der Folgeseite."}
+            </p>
+          )}
+        </div>
 
         <div className="flex flex-col gap-3">
           <h2 className="text-2xl font-semibold tracking-tight text-black">
@@ -236,14 +293,27 @@ export default function EventscraperEventDetail({
               {dates.map((event, index) => (
                 <li
                   key={`${event.url ?? event.date ?? event.city ?? index}`}
-                  className="flex flex-col gap-1 rounded-2xl bg-black px-5 py-4 text-white"
+                  className="flex flex-col gap-3 rounded-2xl bg-black px-5 py-4 text-white"
                 >
-                  <p className="text-base font-semibold tracking-tight">
-                    {formatEventDay(event.date) ?? "Kein Datum"}
-                  </p>
-                  <p className="text-sm text-white/65">
-                    {event.location || "Kein Ort"}
-                  </p>
+                  {eventDataRows(event).map((row) => (
+                    <div key={row.label} className="flex flex-col gap-1">
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-white/40">
+                        {row.label}
+                      </p>
+                      {row.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={row.value}
+                          alt=""
+                          className="h-16 w-16 rounded-lg object-cover"
+                        />
+                      ) : (
+                        <p className="break-words text-sm text-white/80">
+                          {row.value}
+                        </p>
+                      )}
+                    </div>
+                  ))}
                 </li>
               ))}
             </ul>

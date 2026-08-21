@@ -51,6 +51,15 @@ function withEventDefaults(row: EventimEvent): EventimEvent {
     url: row.url ?? null,
     tourUrl: row.tourUrl ?? row.url ?? null,
     productGroupId: row.productGroupId ?? null,
+    groupKey: row.groupKey ?? null,
+    extras:
+      row.extras && typeof row.extras === "object" && !Array.isArray(row.extras)
+        ? Object.fromEntries(
+            Object.entries(row.extras).filter(
+              (entry): entry is [string, string] => typeof entry[1] === "string"
+            )
+          )
+        : {},
   };
 }
 

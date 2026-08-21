@@ -58,6 +58,49 @@ export function isEventimTourUrl(rawUrl: string): boolean {
   }
 }
 
+export function artistSlugFromUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl, "https://www.eventim.de");
+    const segments = url.pathname.split("/").filter(Boolean);
+    const type = segments[0]?.toLowerCase();
+    if ((type === "artist" || type === "attraction") && segments[1]) {
+      return decodeURIComponent(segments[1]).toLowerCase();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function artistPageUrlFromEventimUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl, "https://www.eventim.de");
+    const slug = artistSlugFromUrl(url.toString());
+    if (!slug) return null;
+    const type = url.pathname.split("/").filter(Boolean)[0]?.toLowerCase();
+    if (type !== "artist" && type !== "attraction") return null;
+    return `${url.origin}/${type}/${encodeURIComponent(slug)}/`;
+  } catch {
+    return null;
+  }
+}
+
+export function isArtistListingUrl(rawUrl: string): boolean {
+  try {
+    const segments = new URL(rawUrl, "https://www.eventim.de").pathname
+      .split("/")
+      .filter(Boolean);
+    const type = segments[0]?.toLowerCase();
+    return (
+      (type === "artist" || type === "attraction") &&
+      segments.length === 2 &&
+      Boolean(segments[1])
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function uniqueCities(
   ...values: Array<string | null | undefined | Array<string | null | undefined>>
 ): string[] {

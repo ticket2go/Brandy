@@ -60,6 +60,22 @@ export async function probeScraperUrl(rawUrl: string): Promise<ProbeResult> {
           : "Eventim-Eventdaten konnten nicht geladen werden."
       );
     }
+    try {
+      const { body, contentType } = await fetchWithLimits(url, 8000);
+      if (looksLikeJson(contentType, body)) {
+        addFields(fields, collectJsonFields(body, "jsonld"));
+      } else {
+        addFields(fields, collectHtmlFields(body, parsed));
+      }
+    } catch (error) {
+      if (events.length === 0) {
+        warnings.push(
+          error instanceof Error
+            ? error.message
+            : "Eventim-Folgeseite konnte nicht gelesen werden."
+        );
+      }
+    }
   } else {
     try {
       const { body, contentType } = await fetchWithLimits(url);
@@ -406,10 +422,11 @@ function looksLikeJson(contentType: string, body: string): boolean {
 }
 
 async function fetchWithLimits(
-  url: string
+  url: string,
+  timeoutMs = FETCH_TIMEOUT_MS
 ): Promise<{ body: string; contentType: string }> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       redirect: "follow",

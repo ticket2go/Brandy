@@ -1,7 +1,15 @@
-import { fetchEventimEvents, isEventimUrl, type EventimEvent } from "@/lib/eventim";
+import type { ProbeField } from "@/lib/event-scraper-fields";
+import {
+  eventFieldsFromEvents,
+  fetchEventimEvents,
+  isEventimUrl,
+  type EventimEvent,
+} from "@/lib/eventim";
 
 export type ScrapeRunResult = {
   events: EventimEvent[];
+  fields: ProbeField[];
+  title: string | null;
   warning: string | null;
   error: string | null;
 };
@@ -10,6 +18,8 @@ export async function scrapeEventsFromUrl(
   url: string
 ): Promise<ScrapeRunResult> {
   let events: EventimEvent[] = [];
+  let fields: ProbeField[] = [];
+  let title: string | null = null;
   let warning: string | null = null;
   let error: string | null = null;
 
@@ -21,10 +31,14 @@ export async function scrapeEventsFromUrl(
     });
     const payload = (await response.json()) as {
       events?: EventimEvent[];
+      fields?: ProbeField[];
+      title?: string | null;
       warning?: string | null;
       error?: string;
     };
     events = payload.events ?? [];
+    fields = payload.fields ?? [];
+    title = payload.title ?? null;
     warning = payload.warning ?? null;
     if (!response.ok && events.length === 0) {
       error = payload.error ?? "Scraping fehlgeschlagen.";
@@ -40,6 +54,8 @@ export async function scrapeEventsFromUrl(
       if (events.length > 0) {
         warning = null;
         error = null;
+        if (fields.length === 0) fields = eventFieldsFromEvents(events);
+        title = title ?? events[0]?.name ?? null;
       }
     } catch (err) {
       if (!error) {
@@ -51,5 +67,9 @@ export async function scrapeEventsFromUrl(
     }
   }
 
-  return { events, warning, error };
+  if (fields.length === 0 && events.length > 0) {
+    fields = eventFieldsFromEvents(events);
+  }
+
+  return { events, fields, title, warning, error };
 }
