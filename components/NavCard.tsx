@@ -13,7 +13,6 @@ type NavItem = {
 
 const primaryItems: NavItem[] = [
   { label: "Brands", href: "/brandy#brands" },
-  { label: "Eventscraper", href: "/eventscraper" },
   { label: "Design Manuals", href: "/design-manuals" },
   { label: "Ecosystem", href: "/ecosystem" },
   { label: "QR-Code Generator", href: "/qr-code-generator" },
