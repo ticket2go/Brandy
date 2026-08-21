@@ -17,6 +17,7 @@ export type EventimEvent = {
   city: string | null;
   cities: string[];
   url: string | null;
+  tourUrl?: string | null;
   productGroupId?: string | null;
 };
 
@@ -254,6 +255,7 @@ async function expandProductGroup(
         city: pageDetail.city ?? cities[0] ?? null,
         cities,
         url: pageHref,
+        tourUrl: pageHref,
         productGroupId: groupId,
       }),
     ];
@@ -267,6 +269,7 @@ async function expandProductGroup(
       heroImage: hero ?? event.heroImage ?? event.image,
       cities,
       url: event.url ?? pageHref,
+      tourUrl: pageHref,
       productGroupId: groupId,
     })
   );
@@ -295,6 +298,7 @@ async function enrichEventFromPage(
       formatLocation(event.venue ?? detail.venue, event.city ?? detail.city),
     cities,
     url: href,
+    tourUrl: event.tourUrl ?? href,
   });
 }
 
@@ -501,6 +505,7 @@ function parseEventimItem(
     asString(nested(product, ["venue", "city"])) ??
     asString(product.city);
   const image = imageFrom(product, live);
+  const link = absoluteUrl(eventLink(product), new URL(origin));
   return normalizeEvent({
     name,
     date:
@@ -513,7 +518,8 @@ function parseEventimItem(
     venue,
     city,
     cities: uniqueCities(city),
-    url: absoluteUrl(eventLink(product), new URL(origin)),
+    url: link,
+    tourUrl: link,
     productGroupId: productGroupIdFromProduct(product),
   });
 }
@@ -617,6 +623,7 @@ function normalizeEvent(event: EventimEvent): EventimEvent {
     city: event.city ?? cities[0] ?? null,
     cities,
     url: event.url ?? null,
+    tourUrl: event.tourUrl ?? event.url ?? null,
     productGroupId: event.productGroupId ?? null,
   };
 }

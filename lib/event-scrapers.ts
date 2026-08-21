@@ -49,6 +49,7 @@ function withEventDefaults(row: EventimEvent): EventimEvent {
     city: row.city ?? cities[0] ?? null,
     cities,
     url: row.url ?? null,
+    tourUrl: row.tourUrl ?? row.url ?? null,
     productGroupId: row.productGroupId ?? null,
   };
 }

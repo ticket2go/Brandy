@@ -16,6 +16,8 @@ import {
   updateScraper,
   type EventScraper,
 } from "@/lib/event-scrapers";
+import { formatEventDate } from "@/lib/event-format";
+import { groupEvents } from "@/lib/event-groups";
 import { eventFieldsFromEvents, type EventimEvent } from "@/lib/eventim";
 import { useScraperGenerate } from "@/lib/use-scraper-generate";
 
@@ -178,6 +180,7 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
         {scraper.sources.map((source) => (
           <SourceFeed
             key={source.id}
+            scraperId={scraper.id}
             url={source.url}
             events={source.events}
             count={source.entryCount}
@@ -265,18 +268,21 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
 }
 
 function SourceFeed({
+  scraperId,
   url,
   events,
   count,
   error,
   generating,
 }: {
+  scraperId: string;
   url: string;
   events: EventimEvent[];
   count: number;
   error: string | null;
   generating: boolean;
 }) {
+  const groups = groupEvents(events);
   return (
     <div className="flex flex-col gap-3">
       <div>
@@ -299,17 +305,18 @@ function SourceFeed({
           {error}
         </p>
       )}
-      {events.length > 0 ? (
+      {groups.length > 0 ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {events.map((event, index) => (
-            <article
-              key={`${event.url ?? event.name}-${index}`}
-              className="overflow-hidden rounded-2xl bg-black text-white"
+          {groups.map((group) => (
+            <Link
+              key={group.key}
+              href={`/eventscraper/${scraperId}/event/${encodeURIComponent(group.key)}`}
+              className="overflow-hidden rounded-2xl bg-black text-white transition hover:bg-black/90"
             >
-              {event.heroImage || event.image ? (
+              {group.heroImage || group.image ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={event.heroImage || event.image || ""}
+                  src={group.heroImage || group.image || ""}
                   alt=""
                   className="h-36 w-full object-cover"
                 />
@@ -320,21 +327,27 @@ function SourceFeed({
               )}
               <div className="flex flex-col gap-1 p-4">
                 <h3 className="text-base font-semibold tracking-tight">
-                  {event.name}
+                  {group.name}
                 </h3>
                 <p className="text-[12px] text-white/60">
-                  {event.location || "Kein Ort"}
+                  {group.dates.length === 1
+                    ? group.dates[0]?.location || "Kein Ort"
+                    : `${group.dates.length} Termine`}
                 </p>
                 <p className="text-[12px] text-white/60">
-                  {formatEventDate(event.date) ?? "Kein Datum"}
+                  {group.dates.length === 1
+                    ? formatEventDate(group.dates[0]?.date) ?? "Kein Datum"
+                    : group.cities.length > 0
+                      ? `${group.cities.length} Städte`
+                      : "Folgeseite öffnen"}
                 </p>
-                {(event.cities ?? []).length > 0 ? (
-                  <p className="text-[12px] text-white/60">
-                    {event.cities.join(" · ")}
+                {group.cities.length > 0 ? (
+                  <p className="line-clamp-2 text-[12px] text-white/60">
+                    {group.cities.join(" · ")}
                   </p>
                 ) : null}
               </div>
-            </article>
+            </Link>
           ))}
         </div>
       ) : (
@@ -347,16 +360,6 @@ function SourceFeed({
       )}
     </div>
   );
-}
-
-function formatEventDate(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat("de-DE", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsed);
 }
 
 function mergeFields(current: ProbeField[], incoming: ProbeField[]): ProbeField[] {
