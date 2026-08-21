@@ -216,7 +216,10 @@ export default function EventscraperDetail({ id }: EventscraperDetailProps) {
             <div className="flex flex-wrap gap-3">
               {entry.items.map((field) => {
                 const isSelected = selected.includes(field.key);
-                const isImage = field.key === "event.image" && !!field.sample;
+                const isImage =
+                  (field.key === "event.image" ||
+                    field.key === "event.heroImage") &&
+                  !!field.sample;
                 return (
                   <button
                     key={field.key}
@@ -303,16 +306,16 @@ function SourceFeed({
               key={`${event.url ?? event.name}-${index}`}
               className="overflow-hidden rounded-2xl bg-black text-white"
             >
-              {event.image ? (
+              {event.heroImage || event.image ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={event.image}
+                  src={event.heroImage || event.image || ""}
                   alt=""
                   className="h-36 w-full object-cover"
                 />
               ) : (
                 <div className="flex h-36 items-center justify-center bg-white/5 text-xs text-white/40">
-                  Kein Bild
+                  Kein Herobild
                 </div>
               )}
               <div className="flex flex-col gap-1 p-4">
@@ -320,11 +323,16 @@ function SourceFeed({
                   {event.name}
                 </h3>
                 <p className="text-[12px] text-white/60">
-                  {event.location || "Keine Location"}
+                  {event.location || "Kein Ort"}
                 </p>
                 <p className="text-[12px] text-white/60">
                   {formatEventDate(event.date) ?? "Kein Datum"}
                 </p>
+                {(event.cities ?? []).length > 0 ? (
+                  <p className="text-[12px] text-white/60">
+                    {event.cities.join(" · ")}
+                  </p>
+                ) : null}
               </div>
             </article>
           ))}

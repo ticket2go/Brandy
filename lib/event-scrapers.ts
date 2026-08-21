@@ -33,6 +33,26 @@ function isEvent(value: unknown): value is EventimEvent {
   return typeof row.name === "string";
 }
 
+function withEventDefaults(row: EventimEvent): EventimEvent {
+  const cities = Array.isArray(row.cities)
+    ? row.cities.filter((item): item is string => typeof item === "string")
+    : row.city
+      ? [row.city]
+      : [];
+  return {
+    name: row.name,
+    date: row.date ?? null,
+    image: row.image ?? row.heroImage ?? null,
+    heroImage: row.heroImage ?? row.image ?? null,
+    location: row.location ?? null,
+    venue: row.venue ?? null,
+    city: row.city ?? cities[0] ?? null,
+    cities,
+    url: row.url ?? null,
+    productGroupId: row.productGroupId ?? null,
+  };
+}
+
 function isSource(value: unknown): value is ScraperSource {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
@@ -45,7 +65,9 @@ function withSourceDefaults(row: ScraperSource): ScraperSource {
     url: row.url,
     entryCount: typeof row.entryCount === "number" ? row.entryCount : 0,
     lastScrapedAt: row.lastScrapedAt ?? null,
-    events: Array.isArray(row.events) ? row.events.filter(isEvent) : [],
+    events: Array.isArray(row.events)
+      ? row.events.filter(isEvent).map(withEventDefaults)
+      : [],
     error: typeof row.error === "string" ? row.error : null,
   };
 }

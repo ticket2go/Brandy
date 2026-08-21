@@ -4,6 +4,7 @@ import { probeScraperUrl } from "@/lib/event-scraper-probe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export async function POST(request: Request) {
   let body: unknown;
