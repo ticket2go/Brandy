@@ -4,6 +4,7 @@ export type EventDataRow = {
   label: string;
   value: string;
   image?: boolean;
+  link?: boolean;
 };
 
 export function formatEventDate(value: string | null | undefined): string | null {
@@ -28,24 +29,24 @@ export function formatEventDay(value: string | null | undefined): string | null 
 
 export function eventDataRows(event: EventimEvent): EventDataRow[] {
   const rows: EventDataRow[] = [];
-  const add = (label: string, value: string | null | undefined, image = false) => {
+  const add = (
+    label: string,
+    value: string | null | undefined,
+    kind: "text" | "image" | "link" = "text"
+  ) => {
     if (!value) return;
-    rows.push({ label, value, image });
+    rows.push({
+      label,
+      value,
+      image: kind === "image",
+      link: kind === "link",
+    });
   };
 
-  add("Name", event.name);
-  add("Datum", formatEventDay(event.date) ?? event.date);
-  add("Ort", event.location);
-  add("Venue", event.venue);
   add("Stadt", event.city);
-  add("Städte", event.cities?.join(", "));
-  add("Herobild", event.heroImage, true);
-  add("Bild", event.image && event.image !== event.heroImage ? event.image : null, true);
-  add("URL", event.url);
-  add("Folgeseite", event.tourUrl && event.tourUrl !== event.url ? event.tourUrl : null);
-  add("Product Group", event.productGroupId);
-  for (const [label, value] of Object.entries(event.extras ?? {})) {
-    add(label, value);
-  }
+  add("Datum", formatEventDay(event.date) ?? event.date);
+  add("Ort", event.location ?? event.venue);
+  add("Event-Herobild", event.heroImage ?? event.image, "image");
+  add("Ticketlink", event.ticketUrl ?? event.url, "link");
   return rows;
 }

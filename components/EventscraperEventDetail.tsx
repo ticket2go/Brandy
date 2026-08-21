@@ -226,46 +226,6 @@ export default function EventscraperEventDetail({
 
         <div className="flex flex-col gap-3">
           <h2 className="text-2xl font-semibold tracking-tight text-black">
-            Alle Daten
-          </h2>
-          {pageRows.length > 0 ? (
-            <dl className="grid gap-3 sm:grid-cols-2">
-              {pageRows.map((field) => (
-                <div
-                  key={field.key}
-                  className="rounded-2xl bg-black/[0.04] px-4 py-3"
-                >
-                  <dt className="text-[10px] font-medium uppercase tracking-[0.12em] text-black/40">
-                    {field.label}
-                  </dt>
-                  <dd className="mt-1 break-words text-sm text-black">
-                    {field.key.includes("image") && field.sample ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={field.sample}
-                        alt=""
-                        className="mt-1 h-16 w-16 rounded-lg object-cover"
-                      />
-                    ) : field.key === "event.date" ? (
-                      formatEventDay(field.sample) ?? field.sample
-                    ) : (
-                      field.sample
-                    )}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          ) : (
-            <p className="text-sm text-black/50">
-              {loading
-                ? "Daten werden geladen …"
-                : "Noch keine Felder von der Folgeseite."}
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-3">
-          <h2 className="text-2xl font-semibold tracking-tight text-black">
             Städte
           </h2>
           {group.cities.length > 0 ? (
@@ -293,7 +253,7 @@ export default function EventscraperEventDetail({
               {dates.map((event, index) => (
                 <li
                   key={`${event.url ?? event.date ?? event.city ?? index}`}
-                  className="flex flex-col gap-3 rounded-2xl bg-black px-5 py-4 text-white"
+                  className="grid gap-3 rounded-2xl bg-black px-5 py-4 text-white sm:grid-cols-2"
                 >
                   {eventDataRows(event).map((row) => (
                     <div key={row.label} className="flex flex-col gap-1">
@@ -305,8 +265,17 @@ export default function EventscraperEventDetail({
                         <img
                           src={row.value}
                           alt=""
-                          className="h-16 w-16 rounded-lg object-cover"
+                          className="h-20 w-32 rounded-lg object-cover"
                         />
+                      ) : row.link ? (
+                        <a
+                          href={row.value}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="break-all text-sm text-white underline decoration-white/40 hover:decoration-white"
+                        >
+                          {row.value}
+                        </a>
                       ) : (
                         <p className="break-words text-sm text-white/80">
                           {row.value}
@@ -321,6 +290,43 @@ export default function EventscraperEventDetail({
             <p className="text-sm text-black/50">Keine Termine gefunden.</p>
           )}
         </div>
+
+        <details className="rounded-2xl bg-black/[0.04] px-5 py-4">
+          <summary className="cursor-pointer text-sm font-semibold text-black">
+            Weitere gescrapte Felder der Folgeseite
+          </summary>
+          {pageRows.length > 0 ? (
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+              {pageRows.map((field) => (
+                <div key={field.key} className="rounded-xl bg-white px-4 py-3">
+                  <dt className="text-[10px] font-medium uppercase tracking-[0.12em] text-black/40">
+                    {field.label}
+                  </dt>
+                  <dd className="mt-1 break-words text-sm text-black">
+                    {field.key.toLowerCase().includes("image") && field.sample ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={field.sample}
+                        alt=""
+                        className="mt-1 h-16 w-24 rounded-lg object-cover"
+                      />
+                    ) : field.key === "event.date" ? (
+                      formatEventDay(field.sample) ?? field.sample
+                    ) : (
+                      field.sample
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="mt-3 text-sm text-black/50">
+              {loading
+                ? "Daten werden geladen …"
+                : "Noch keine weiteren Felder gefunden."}
+            </p>
+          )}
+        </details>
       </section>
     </main>
   );

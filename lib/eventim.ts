@@ -20,6 +20,7 @@ export type EventimEvent = {
   city: string | null;
   cities: string[];
   url: string | null;
+  ticketUrl?: string | null;
   tourUrl?: string | null;
   productGroupId?: string | null;
   groupKey?: string | null;
@@ -124,6 +125,12 @@ export function eventFieldsFromEvents(events: EventimEvent[]): ProbeField[] {
       sample: cities.length > 0 ? cities.join(", ") : first?.city ?? null,
     },
     {
+      key: "event.ticketUrl",
+      label: "Ticketlink",
+      group: "event",
+      sample: first?.ticketUrl ?? first?.url ?? null,
+    },
+    {
       key: "event.url",
       label: "URL",
       group: "event",
@@ -207,6 +214,7 @@ async function fetchArtistListing(
         city: pageDetail.city ?? cities[0] ?? null,
         cities,
         url: artistUrl,
+        ticketUrl: pageDetail.ticketUrl ?? artistUrl,
         tourUrl: artistUrl,
         groupKey,
         extras,
@@ -220,6 +228,7 @@ async function fetchArtistListing(
       image: event.image ?? hero,
       heroImage: hero ?? event.heroImage ?? event.image,
       cities: uniqueCities(event.cities, event.city, cities),
+      ticketUrl: event.ticketUrl ?? event.url ?? pageDetail.ticketUrl,
       tourUrl: artistUrl,
       groupKey: groupKey ?? event.groupKey,
       extras: { ...extras, ...event.extras },
@@ -363,6 +372,7 @@ async function expandProductGroup(
         city: pageDetail.city ?? cities[0] ?? null,
         cities,
         url: pageHref,
+        ticketUrl: pageDetail.ticketUrl ?? pageHref,
         tourUrl: artistPageUrlFromEventimUrl(pageHref) ?? pageHref,
         productGroupId: groupId,
       }),
@@ -377,6 +387,7 @@ async function expandProductGroup(
       heroImage: hero ?? event.heroImage ?? event.image,
       cities,
       url: event.url ?? pageHref,
+      ticketUrl: event.ticketUrl ?? event.url ?? pageDetail.ticketUrl ?? pageHref,
       tourUrl: artistPageUrlFromEventimUrl(pageHref) ?? pageHref,
       productGroupId: groupId,
     })
@@ -406,6 +417,7 @@ async function enrichEventFromPage(
       formatLocation(event.venue ?? detail.venue, event.city ?? detail.city),
     cities,
     url: href,
+    ticketUrl: detail.ticketUrl ?? event.ticketUrl ?? href,
     tourUrl: artistPageUrlFromEventimUrl(href) ?? event.tourUrl ?? href,
   });
 }
@@ -713,6 +725,7 @@ function detailEventsToEvents(
         city: row.city,
         cities: uniqueCities(row.city),
         url: row.url,
+        ticketUrl: row.ticketUrl ?? row.url,
       })
     );
   }
@@ -732,6 +745,7 @@ function normalizeEvent(event: EventimEvent): EventimEvent {
     city: event.city ?? cities[0] ?? null,
     cities,
     url: event.url ?? null,
+    ticketUrl: event.ticketUrl ?? event.url ?? null,
     tourUrl:
       artistPageUrlFromEventimUrl(event.tourUrl ?? event.url ?? "") ??
       event.tourUrl ??

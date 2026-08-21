@@ -6,6 +6,7 @@ export type EventimDetailEvent = {
   city: string | null;
   location: string | null;
   url: string | null;
+  ticketUrl: string | null;
 };
 
 export type EventimDetailPage = {
@@ -16,9 +17,13 @@ export type EventimDetailPage = {
   city: string | null;
   location: string | null;
   cities: string[];
+  ticketUrl: string | null;
   events: EventimDetailEvent[];
   nextData: unknown | null;
 };
+
+const TICKET_LABEL = /^(weiter|tickets?|karten|jetzt\s+(kaufen|buchen)|zu\s+den\s+tickets?)$/i;
+const TICKET_HREF = /\/(event|tickets?|checkout|cart|warenkorb)\//i;
 
 const EVENT_TYPES = /^(Music|Theater|Comedy|Festival|Sports|Education|Childrens|Literary|Dance|VisualArts)?Event$/i;
 
@@ -147,6 +152,7 @@ export function parseEventimDetailHtml(
     dataValues(html, "city")
   );
   const first = events[0];
+  const pageTicketUrl = ticketLinkFrom(html, origin);
 
   return {
     name,
@@ -158,13 +164,47 @@ export function parseEventimDetailHtml(
       first?.location ??
       formatLocation(first?.venue ?? null, first?.city ?? cities[0] ?? null),
     cities,
+    ticketUrl: first?.ticketUrl ?? pageTicketUrl,
     events: events.map((event) => ({
       ...event,
       image: absolutize(event.image ?? heroImage, origin),
       url: absolutize(event.url, origin),
+      ticketUrl: absolutize(event.ticketUrl ?? event.url, origin),
     })),
     nextData: parseNextData(html),
   };
+}
+
+export function ticketLinkFrom(
+  html: string,
+  origin?: string
+): string | null {
+  const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  let labelledHref: string | null = null;
+  let hrefFallback: string | null = null;
+
+  while ((match = anchorPattern.exec(html)) !== null) {
+    const attrs = match[1] ?? "";
+    const href = getAttr(attrs, "href");
+    if (!href || href.startsWith("#") || /^(javascript|mailto):/i.test(href)) {
+      continue;
+    }
+    const labels = [
+      stripTags(match[2] ?? ""),
+      getAttr(attrs, "aria-label") ?? "",
+      getAttr(attrs, "title") ?? "",
+      getAttr(attrs, "data-testid") ?? "",
+    ].map((value) => decodeEntities(value).replace(/\s+/g, " ").trim());
+    const labelled = labels.some((label) => TICKET_LABEL.test(label));
+    const ticketHref = TICKET_HREF.test(href);
+
+    if (labelled && ticketHref) return absolutize(href, origin);
+    if (labelled && !labelledHref) labelledHref = href;
+    if (ticketHref && !hrefFallback) hrefFallback = href;
+  }
+
+  return absolutize(hrefFallback ?? labelledHref, origin);
 }
 
 export function parseJsonLdEvents(
@@ -214,6 +254,10 @@ function parseMicrodataEvents(
       itempropContent(block, "url") ??
       hrefIn(block, /\/event\//i);
     if (!name && !date && !city && !venue) continue;
+    const ticketUrl =
+      nestedItemprop(block, "offers", "url") ??
+      ticketLinkFrom(block, origin) ??
+      url;
     events.push({
       name,
       date,
@@ -222,6 +266,7 @@ function parseMicrodataEvents(
       city,
       location: formatLocation(venue, city),
       url: absolutize(url, origin),
+      ticketUrl: absolutize(ticketUrl, origin),
     });
   }
   return events;
@@ -272,6 +317,8 @@ function eventFromJsonLd(
     asText(record.endDate);
   const url = asText(record.url) ?? asText(record["@id"]);
   if (!name && !date && !city && !venue) return null;
+  const offers = asRecord(firstOf(record.offers));
+  const ticketUrl = asText(offers?.url) ?? asText(record.ticketUrl) ?? url;
   return {
     name,
     date,
@@ -280,6 +327,7 @@ function eventFromJsonLd(
     city,
     location: formatLocation(venue, city),
     url: absolutize(url, origin),
+    ticketUrl: absolutize(ticketUrl, origin),
   };
 }
 
@@ -300,7 +348,7 @@ function mergeDetailEvents(events: EventimDetailEvent[]): EventimDetailEvent[] {
   const out: EventimDetailEvent[] = [];
   for (const event of events) {
     const key = [
-      event.url ?? "",
+      event.url ?? event.ticketUrl ?? "",
       event.name ?? "",
       event.date ?? "",
       event.city ?? "",
