@@ -30,14 +30,21 @@ export default function EventscraperManager() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setScrapers(loadScrapers());
-    setReady(true);
+    const sync = () => {
+      setScrapers(loadScrapers());
+      setReady(true);
+    };
+    sync();
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => {
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", handleVisible);
+    };
   }, []);
-
-  useEffect(() => {
-    if (!ready) return;
-    saveScrapers(scrapers);
-  }, [ready, scrapers]);
 
   useEffect(() => {
     if (!formOpen) return;
@@ -145,15 +152,20 @@ export default function EventscraperManager() {
       name: trimmedName,
       url: normalizedUrl,
       createdAt: new Date().toISOString(),
+      selectedFields: [],
     };
 
-    setScrapers((prev) => [...prev, next]);
+    const nextList = [...scrapers, next];
+    setScrapers(nextList);
+    saveScrapers(nextList);
     closeForm();
   };
 
   const confirmDelete = () => {
     if (!pendingDelete) return;
-    setScrapers((prev) => prev.filter((item) => item.id !== pendingDelete.id));
+    const nextList = scrapers.filter((item) => item.id !== pendingDelete.id);
+    setScrapers(nextList);
+    saveScrapers(nextList);
     setPendingDelete(null);
   };
 
@@ -192,6 +204,7 @@ export default function EventscraperManager() {
             {scrapers.map((scraper) => (
               <ScraperCard
                 key={scraper.id}
+                id={scraper.id}
                 name={scraper.name}
                 url={scraper.url}
                 onDelete={() => setPendingDelete(scraper)}
