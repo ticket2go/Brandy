@@ -1,34 +1,27 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import ConfirmDialog from "./ConfirmDialog";
-import EventscraperCard from "./EventscraperCard";
+import ScraperCard from "./ScraperCard";
+import { runScraper } from "@/lib/run-scraper";
 import {
   loadScrapers,
-  newScraperId,
-  newScraperSource,
-  normalizeScraperUrl,
+  newScraper,
+  normalizeUrl,
   saveScrapers,
-  type EventScraper,
-} from "@/lib/event-scrapers";
-import { useScraperGenerate } from "@/lib/use-scraper-generate";
+  type Scraper,
+} from "@/lib/scrapers";
 
-export default function EventscraperManager() {
-  const [scrapers, setScrapers] = useState<EventScraper[]>([]);
+export default function ScraperManager() {
+  const [scrapers, setScrapers] = useState<Scraper[]>([]);
   const [ready, setReady] = useState(false);
+  const [runningId, setRunningId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<EventScraper | null>(null);
-  const [activeScraperId, setActiveScraperId] = useState<string | null>(null);
-  const { generatingId, generateSource, generateAll } = useScraperGenerate();
+  const [pendingDelete, setPendingDelete] = useState<Scraper | null>(null);
 
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -68,11 +61,7 @@ export default function EventscraperManager() {
       if (cancelled || !overlayRef.current || !panelRef.current) return;
       gsap.fromTo(
         overlayRef.current,
-        {
-          opacity: 0,
-          backdropFilter: "blur(0px)",
-          WebkitBackdropFilter: "blur(0px)",
-        },
+        { opacity: 0, backdropFilter: "blur(0px)", WebkitBackdropFilter: "blur(0px)" },
         {
           opacity: 1,
           backdropFilter: "blur(24px)",
@@ -103,12 +92,6 @@ export default function EventscraperManager() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formOpen]);
-
-  const replaceScraper = (next: EventScraper) => {
-    setScrapers((prev) =>
-      prev.map((item) => (item.id === next.id ? next : item))
-    );
-  };
 
   const closeForm = async () => {
     const gsap = (await import("gsap")).default;
@@ -145,7 +128,7 @@ export default function EventscraperManager() {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmedName = name.trim();
-    const normalizedUrl = normalizeScraperUrl(url);
+    const normalizedUrl = normalizeUrl(url);
     if (!trimmedName) {
       setError("Bitte einen Namen angeben.");
       return;
@@ -154,21 +137,24 @@ export default function EventscraperManager() {
       setError("Bitte eine gültige URL angeben.");
       return;
     }
-
-    const source = newScraperSource(normalizedUrl);
-    const next: EventScraper = {
-      id: newScraperId(),
-      name: trimmedName,
-      url: normalizedUrl,
-      createdAt: new Date().toISOString(),
-      selectedFields: [],
-      sources: [source],
-    };
-
-    const nextList = [...scrapers, next];
+    const nextList = [...scrapers, newScraper(trimmedName, normalizedUrl)];
     setScrapers(nextList);
     saveScrapers(nextList);
     closeForm();
+  };
+
+  const handleRun = async (scraper: Scraper) => {
+    setRunningId(scraper.id);
+    try {
+      const next = await runScraper(scraper);
+      if (next) {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === next.id ? next : item))
+        );
+      }
+    } finally {
+      setRunningId(null);
+    }
   };
 
   const confirmDelete = () => {
@@ -190,13 +176,7 @@ export default function EventscraperManager() {
         title="Neuen Scraper anlegen"
         className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
       >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 20 20"
-          fill="none"
-          aria-hidden="true"
-        >
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path
             d="M10 4v12M4 10h12"
             stroke="currentColor"
@@ -212,25 +192,11 @@ export default function EventscraperManager() {
         ) : scrapers.length > 0 ? (
           <div className="flex flex-col gap-4">
             {scrapers.map((scraper) => (
-              <EventscraperCard
+              <ScraperCard
                 key={scraper.id}
                 scraper={scraper}
-                generatingId={
-                  activeScraperId === scraper.id ? generatingId : null
-                }
-                onChange={replaceScraper}
-                onGenerate={async (source) => {
-                  setActiveScraperId(scraper.id);
-                  const next = await generateSource(scraper.id, source);
-                  if (next) replaceScraper(next);
-                  setActiveScraperId(null);
-                }}
-                onGenerateAll={async () => {
-                  setActiveScraperId(scraper.id);
-                  const next = await generateAll(scraper);
-                  if (next) replaceScraper(next);
-                  setActiveScraperId(null);
-                }}
+                running={runningId === scraper.id}
+                onRun={() => handleRun(scraper)}
                 onDelete={() => setPendingDelete(scraper)}
               />
             ))}
@@ -238,8 +204,8 @@ export default function EventscraperManager() {
         ) : (
           <p className="text-sm text-black/50">
             Noch keine Scraper. Lege den ersten mit dem{" "}
-            <kbd className="rounded bg-black/5 px-1 py-0.5 text-[11px]">+</kbd>{" "}
-            oben links an.
+            <kbd className="rounded bg-black/5 px-1 py-0.5 text-[11px]">+</kbd> oben
+            links an.
           </p>
         )}
       </section>
@@ -260,17 +226,17 @@ export default function EventscraperManager() {
           <div
             ref={panelRef}
             className="w-full max-w-5xl"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
           >
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <div className="flex items-end gap-6 border-b-2 border-white/70 px-2 pb-4">
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <label htmlFor="scraper-name-overlay" className="sr-only">
+                  <label htmlFor="scraper-name" className="sr-only">
                     Name
                   </label>
                   <input
                     ref={inputRef}
-                    id="scraper-name-overlay"
+                    id="scraper-name"
                     type="text"
                     value={name}
                     onChange={(event) => setName(event.target.value)}
@@ -279,11 +245,11 @@ export default function EventscraperManager() {
                     className="min-w-0 flex-1 border-0 bg-transparent font-semibold tracking-tight text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0"
                     style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
                   />
-                  <label htmlFor="scraper-url-overlay" className="sr-only">
+                  <label htmlFor="scraper-url" className="sr-only">
                     URL
                   </label>
                   <input
-                    id="scraper-url-overlay"
+                    id="scraper-url"
                     type="text"
                     inputMode="url"
                     value={url}

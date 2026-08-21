@@ -1,11 +1,9 @@
-import EventscraperDetail from "@/components/EventscraperDetail";
+import ScraperDetail from "@/components/ScraperDetail";
 
-type EventscraperDetailPageProps = {
+type ScraperDetailPageProps = {
   params: { id: string };
 };
 
-export default function EventscraperDetailPage({
-  params,
-}: EventscraperDetailPageProps) {
-  return <EventscraperDetail id={params.id} />;
+export default function ScraperDetailPage({ params }: ScraperDetailPageProps) {
+  return <ScraperDetail id={params.id} />;
 }

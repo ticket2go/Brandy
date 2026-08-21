@@ -1,7 +1,6 @@
 import Link from "next/link";
 
-import EventscraperManager from "@/components/EventscraperManager";
-import EventscraperStats from "@/components/EventscraperStats";
+import ScraperManager from "@/components/ScraperManager";
 import Title from "@/components/Title";
 
 export default function EventscraperPage() {
@@ -15,9 +14,11 @@ export default function EventscraperPage() {
           Projekte
         </Link>
         <Title text="Eventscraper" />
-        <EventscraperStats />
+        <p className="text-sm text-black/55">
+          Jede Card ist ein eigener Scraper für eine Seite.
+        </p>
       </header>
-      <EventscraperManager />
+      <ScraperManager />
     </main>
   );
 }
