@@ -27,6 +27,8 @@ type HeroExtra = {
   name?: string | null;
   startsAt?: string | null;
   ticketUrl?: string | null;
+  fetchPage?: boolean;
+  quick?: boolean;
 };
 
 export function heroImageCandidates(
@@ -67,7 +69,7 @@ export function heroImageCandidates(
     }
   }
 
-  return out.slice(0, MAX_CANDIDATES);
+  return out.slice(0, extra?.quick ? 8 : MAX_CANDIDATES);
 }
 
 export async function resolveHeroImage(
@@ -89,7 +91,7 @@ export async function resolveHeroImage(
     if (hit >= 0) found = batch[hit] ?? null;
   }
 
-  if (!found) {
+  if (!found && extra?.fetchPage !== false) {
     found = await fetchEventPageHero(extra?.ticketUrl ?? null);
   }
 
@@ -104,17 +106,22 @@ export async function applyHeroImages(
     startsAt?: string | null;
     ticketUrl?: string | null;
   }>,
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  options?: { fetchPages?: boolean; quick?: boolean }
 ): Promise<void> {
+  const fetchPages = options?.fetchPages !== false;
+  const quick = options?.quick === true;
   const jobs = new Map<string, HeroExtra & { listing: string | null }>();
   for (const event of events) {
-    const key = jobKey(event);
+    const key = jobKey(event, fetchPages);
     if (jobs.has(key)) continue;
     jobs.set(key, {
       listing: event.heroImage,
       name: event.name,
       startsAt: event.startsAt,
       ticketUrl: event.ticketUrl,
+      fetchPage: fetchPages,
+      quick,
     });
   }
 
@@ -135,17 +142,27 @@ export async function applyHeroImages(
 
   for (const event of events) {
     event.heroImage =
-      resolved.get(jobKey(event)) ?? withoutListingThumb(event.heroImage);
+      resolved.get(jobKey(event, fetchPages)) ??
+      withoutListingThumb(event.heroImage);
   }
 }
 
-function jobKey(event: {
-  heroImage: string | null;
-  name?: string | null;
-  startsAt?: string | null;
-  ticketUrl?: string | null;
-}): string {
-  return `${event.heroImage ?? ""}|${event.name ?? ""}|${event.startsAt ?? ""}|${event.ticketUrl ?? ""}`;
+function jobKey(
+  event: {
+    heroImage: string | null;
+    name?: string | null;
+    startsAt?: string | null;
+    ticketUrl?: string | null;
+  },
+  fetchPages: boolean
+): string {
+  if (fetchPages) {
+    return `${event.heroImage ?? ""}|${event.name ?? ""}|${event.ticketUrl ?? ""}`;
+  }
+  if (event.heroImage && !isListingThumb(event.heroImage)) {
+    return event.heroImage;
+  }
+  return `name:${(event.name ?? "").trim().toLowerCase()}`;
 }
 
 function rewriteListingToArtwork(listing: string | null): string | null {

@@ -7,6 +7,7 @@ import ScraperCard from "./ScraperCard";
 import { runScraper, scrapeScraperFollowUps, updateScraperEntries } from "@/lib/run-scraper";
 import type { SearchProgress } from "@/lib/search-progress";
 import {
+  getScraper,
   loadScrapers,
   newScraper,
   normalizeUrl,
@@ -162,8 +163,14 @@ export default function ScraperManager() {
   const handleRun = async (scraper: Scraper) => {
     setRunningId(scraper.id);
     try {
-      const next = await runScraper(scraper, (progress) => {
+      const next = await runScraper(scraper, (progress, events) => {
         setSearchProgress((prev) => ({ ...prev, [scraper.id]: progress }));
+        if (!events) return;
+        const current = getScraper(scraper.id);
+        if (!current) return;
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === current.id ? current : item))
+        );
       });
       if (next) {
         setScrapers((prev) =>
@@ -222,8 +229,14 @@ export default function ScraperManager() {
           );
         },
         controller.signal,
-        (progress) => {
+        (progress, events) => {
           setSearchProgress((prev) => ({ ...prev, [scraper.id]: progress }));
+          if (!events) return;
+          const current = getScraper(scraper.id);
+          if (!current) return;
+          setScrapers((prev) =>
+            prev.map((item) => (item.id === current.id ? current : item))
+          );
         }
       );
       if (next) {

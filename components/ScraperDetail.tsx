@@ -67,7 +67,12 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     if (!scraper) return;
     setLoading(true);
     try {
-      persist(await loadScraperPreview(scraper, setSearchProgress));
+      persist(
+        await loadScraperPreview(scraper, (progress, events) => {
+          setSearchProgress(progress);
+          if (events) persist(getScraper(id));
+        })
+      );
     } finally {
       setSearchProgress(null);
       setLoading(false);
@@ -78,7 +83,12 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     if (!scraper) return;
     setLoading(true);
     try {
-      persist(await runScraper(scraper, setSearchProgress));
+      persist(
+        await runScraper(scraper, (progress, events) => {
+          setSearchProgress(progress);
+          if (events) persist(getScraper(id));
+        })
+      );
     } finally {
       setSearchProgress(null);
       setLoading(false);
@@ -115,7 +125,10 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
           scraper,
           (_progress, next) => persist(next),
           controller.signal,
-          setSearchProgress
+          (progress, events) => {
+            setSearchProgress(progress);
+            if (events) persist(getScraper(id));
+          }
         )
       );
     } finally {

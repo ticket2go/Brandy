@@ -65,7 +65,7 @@ export function isEventimUrl(rawUrl: string): boolean {
 }
 
 export type SearchScrapeOptions = {
-  onProgress?: (progress: SearchProgress) => void;
+  onProgress?: (progress: SearchProgress, events?: ScrapedEvent[]) => void;
 };
 
 export async function scrapeEventim(
@@ -76,7 +76,8 @@ export async function scrapeEventim(
   let events: ScrapedEvent[] = [];
   let totalResults: number | null = null;
   let searchError: Error | null = null;
-  const emit = (progress: SearchProgress) => options?.onProgress?.(progress);
+  const emit = (progress: SearchProgress, nextEvents?: ScrapedEvent[]) =>
+    options?.onProgress?.(progress, nextEvents);
   emit(makeSearchProgress("search", 0, null));
 
   try {
@@ -100,10 +101,25 @@ export async function scrapeEventim(
   }
 
   const unique = sortEvents(dedupeEvents(events));
-  emit(makeSearchProgress("heroes", unique.length, totalResults ?? unique.length, 0, unique.length));
-  await applyHeroImages(unique, (done, total) => {
-    emit(makeSearchProgress("heroes", unique.length, totalResults ?? unique.length, done, total));
-  });
+  const listed = unique.map(withDisplayFields);
+  emit(
+    makeSearchProgress("search", unique.length, totalResults ?? unique.length),
+    listed
+  );
+  emit(
+    makeSearchProgress("heroes", unique.length, unique.length, 0, unique.length),
+    listed
+  );
+  await applyHeroImages(
+    unique,
+    (done, total) => {
+      emit(
+        makeSearchProgress("heroes", unique.length, unique.length, done, total),
+        unique.map(withDisplayFields)
+      );
+    },
+    { fetchPages: false, quick: true }
+  );
   return {
     events: unique.map(withDisplayFields),
     warning:

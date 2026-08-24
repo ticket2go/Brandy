@@ -38,11 +38,21 @@ type RunPayload = {
 
 const FOLLOW_UP_CONCURRENCY = 3;
 
+type SearchListener = (
+  progress: SearchProgress,
+  events?: ScrapedEvent[]
+) => void;
+
 export async function loadScraperPreview(
   scraper: Scraper,
-  onSearchProgress?: (progress: SearchProgress) => void
+  onSearchProgress?: SearchListener
 ): Promise<Scraper | null> {
-  const result = await scrapeWithFallback(scraper.url, onSearchProgress);
+  const result = await scrapeWithFallback(scraper.url, (progress, events) => {
+    onSearchProgress?.(progress, events);
+    if (progress.phase === "search" && progress.percent >= 100) {
+      persistSearchPreview(scraper.id, events);
+    }
+  });
   const firstLoad = scraper.preview.length === 0;
   return updateScraper(scraper.id, {
     preview: result.events,
@@ -56,9 +66,14 @@ export async function loadScraperPreview(
 
 export async function runScraper(
   scraper: Scraper,
-  onSearchProgress?: (progress: SearchProgress) => void
+  onSearchProgress?: SearchListener
 ): Promise<Scraper | null> {
-  const result = await scrapeWithFallback(scraper.url, onSearchProgress);
+  const result = await scrapeWithFallback(scraper.url, (progress, events) => {
+    onSearchProgress?.(progress, events);
+    if (progress.phase === "search" && progress.percent >= 100) {
+      persistSearchPreview(scraper.id, events);
+    }
+  });
   const selection = selectionForRerun(scraper.selection);
   const events = applySelection(result.events, selection);
   return updateScraper(scraper.id, {
@@ -77,11 +92,16 @@ export async function updateScraperEntries(
   scraper: Scraper,
   onProgress?: (progress: FollowUpProgress, next: Scraper) => void,
   signal?: AbortSignal,
-  onSearchProgress?: (progress: SearchProgress) => void
+  onSearchProgress?: SearchListener
 ): Promise<Scraper | null> {
   const previous =
     scraper.preview.length > 0 ? scraper.preview : scraper.events;
-  const search = await scrapeWithFallback(scraper.url, onSearchProgress);
+  const search = await scrapeWithFallback(scraper.url, (progress, events) => {
+    onSearchProgress?.(progress, events);
+    if (progress.phase === "search" && progress.percent >= 100) {
+      persistSearchPreview(scraper.id, events);
+    }
+  });
   if (search.events.length === 0) {
     return updateScraper(scraper.id, {
       lastRunAt: new Date().toISOString(),
@@ -360,9 +380,21 @@ export function applyScraperSelection(
   });
 }
 
+function persistSearchPreview(id: string, events?: ScrapedEvent[]) {
+  if (!events || events.length === 0) return;
+  try {
+    updateScraper(id, {
+      preview: events,
+      entryCount: events.length,
+    });
+  } catch {
+    // Zwischenstand ist optional, der Lauf geht weiter.
+  }
+}
+
 async function scrapeWithFallback(
   url: string,
-  onSearchProgress?: (progress: SearchProgress) => void
+  onSearchProgress?: SearchListener
 ): Promise<RunPayload> {
   onSearchProgress?.(makeSearchProgress("search", 0, null));
   if (typeof window !== "undefined" && isEventimUrl(url)) {
