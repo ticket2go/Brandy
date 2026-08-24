@@ -94,6 +94,7 @@ export function ingestSummaryOf(input: {
   rejected: number;
   skipped: number;
   withImage: number;
+  withoutImage?: number;
   imagesConfirmed: number | null;
   imagesMissing: number;
   error: string | null;
@@ -105,11 +106,16 @@ export function ingestSummaryOf(input: {
   if (input.outcome === "failed") {
     return input.error ?? "Die Übertragung an GetHyped ist fehlgeschlagen.";
   }
+  const withoutImage = input.withoutImage ?? Math.max(0, input.sent - input.withImage);
   const images =
-    input.imagesConfirmed == null
-      ? input.withImage > 0
+    input.withImage === 0
+      ? `Kein Event hatte ein Bild – ${withoutImage} ohne image_url gesendet.`
+      : input.imagesConfirmed == null
         ? `${input.withImage} Bilder mitgeschickt, Bestätigung durch GetHyped fehlt.`
-        : "Keine Bilder mitgeschickt."
-      : `${input.imagesConfirmed} von ${input.withImage} Bildern bestätigt.`;
-  return `${input.accepted} von ${input.sent} Events übernommen. ${images}`;
+        : `${input.imagesConfirmed} von ${input.withImage} Bildern bestätigt.`;
+  const missing =
+    input.withImage > 0 && withoutImage > 0
+      ? ` ${withoutImage} Events ohne Bild.`
+      : "";
+  return `${input.accepted} von ${input.sent} Events übernommen. ${images}${missing}`;
 }

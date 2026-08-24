@@ -5,11 +5,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import ConfirmDialog from "./ConfirmDialog";
 import GethypedTokenField from "./GethypedTokenField";
 import ScraperCard from "./ScraperCard";
-import {
-  emptyIngest,
-  ingestToGethyped,
-  loadGethypedToken,
-} from "@/lib/gethyped-ingest";
+import { emptyIngest, ingestToGethyped } from "@/lib/gethyped-ingest";
+import { fetchStoredToken } from "@/lib/gethyped-token";
 import {
   makeIngestProgress,
   type IngestProgress,
@@ -292,7 +289,7 @@ export default function ScraperManager() {
     try {
       const ingest = await ingestToGethyped(
         events,
-        loadGethypedToken(),
+        await fetchStoredToken(),
         (progress) => {
           setIngestProgress((prev) => ({ ...prev, [scraper.id]: progress }));
         }

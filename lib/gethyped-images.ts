@@ -6,13 +6,16 @@ import type { GethypedEvent } from "@/lib/gethyped-map";
 
 const BUCKETS = ["scraper-images", "brand-assets"];
 const PREFIX = "scraper-heroes";
-const CONCURRENCY = 6;
+const CONCURRENCY = 8;
+// Der Ingest-Request darf nicht am Bild-Auflösen sterben.
+const BUDGET_MS = 55_000;
 
 export type PreparedImages = {
   events: GethypedEvent[];
   withImage: number;
   upgraded: number;
   rehosted: number;
+  timedOut: boolean;
 };
 
 /**
@@ -35,11 +38,21 @@ export async function prepareGethypedImages(
   const resolved = new Map<string, string | null>();
   let upgraded = 0;
   let rehosted = 0;
+  let timedOut = false;
   const entries = [...jobs.entries()];
+  const deadline = Date.now() + BUDGET_MS;
   let finished = 0;
   onProgress?.(0, entries.length);
 
   for (let index = 0; index < entries.length; index += CONCURRENCY) {
+    if (Date.now() > deadline) {
+      timedOut = true;
+      // Restliche Events behalten ihr Listenbild, statt ohne Bild zu gehen.
+      for (const [key, job] of entries.slice(index)) {
+        if (!resolved.has(key)) resolved.set(key, job.listing);
+      }
+      break;
+    }
     await Promise.all(
       entries.slice(index, index + CONCURRENCY).map(async ([key, job]) => {
         const best = await upgradeHeroForPublish(job.listing, {
@@ -75,6 +88,7 @@ export async function prepareGethypedImages(
     withImage: next.filter((event) => event.image_url).length,
     upgraded,
     rehosted,
+    timedOut,
   };
 }
 

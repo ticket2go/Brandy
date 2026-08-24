@@ -7,6 +7,7 @@ import {
   mapScrapedEvents,
   type GethypedEvent,
 } from "@/lib/gethyped-map";
+import { envIngestToken, storedIngestToken } from "@/lib/gethyped-server-token";
 import { verifyBatchImages } from "@/lib/gethyped-verify";
 import {
   ingestProgressLabel,
@@ -25,7 +26,8 @@ const MAX_EVENTS = 500;
 const MAX_BYTES = 1_800_000;
 
 export async function GET() {
-  return NextResponse.json({ configured: Boolean(readEnvToken()) });
+  const configured = Boolean(envIngestToken() || (await storedIngestToken()));
+  return NextResponse.json({ configured });
 }
 
 export async function POST(request: Request) {
@@ -36,7 +38,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Ungültiger Request-Body." }, { status: 400 });
   }
 
-  const token = readToken(body);
+  const token = await readToken(body);
   if (!token) {
     return NextResponse.json(
       {
@@ -80,6 +82,14 @@ export async function POST(request: Request) {
         );
         result.sent = prepared.events.length;
         result.withImage = prepared.withImage;
+        result.withoutImage = prepared.events.length - prepared.withImage;
+        result.imagelessItems = prepared.events
+          .filter((event) => !event.image_url)
+          .slice(0, 20)
+          .map((event) => ({
+            name: event.name,
+            reason: "Auf Eventim war kein Bild auffindbar.",
+          }));
 
         if (prepared.events.length === 0) {
           result.error = "Kein Event erfüllt die GetHyped-Regeln.";
@@ -148,20 +158,12 @@ export async function POST(request: Request) {
   });
 }
 
-function readEnvToken(): string {
-  return (
-    process.env.GETHYPED_INGEST_TOKEN?.trim() ||
-    process.env.GETHYPED_TOKEN?.trim() ||
-    ""
-  );
-}
-
-function readToken(body: unknown): string {
+async function readToken(body: unknown): Promise<string> {
   if (typeof body === "object" && body !== null && "token" in body) {
     const value = (body as { token?: unknown }).token;
     if (typeof value === "string" && value.trim()) return value.trim();
   }
-  return readEnvToken();
+  return envIngestToken() || (await storedIngestToken());
 }
 
 function readEvents(body: unknown): ScrapedEvent[] {

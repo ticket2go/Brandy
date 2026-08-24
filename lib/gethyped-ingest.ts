@@ -13,6 +13,7 @@ export type ScraperIngest = {
   rejected: number;
   skipped: number;
   withImage: number;
+  withoutImage: number;
   imagesConfirmed: number | null;
   imagesMissing: number;
   outcome: IngestOutcome;
@@ -21,28 +22,8 @@ export type ScraperIngest = {
   error: string | null;
   rejectedItems: Array<{ name: string; reason: string }>;
   skippedItems: Array<{ name: string; reason: string }>;
+  imagelessItems: Array<{ name: string; reason: string }>;
 };
-
-const TOKEN_KEY = "eventscraper.gethyped.token";
-
-export function loadGethypedToken(): string {
-  if (typeof window === "undefined") return "";
-  try {
-    return window.localStorage.getItem(TOKEN_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-export function saveGethypedToken(token: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (token.trim()) window.localStorage.setItem(TOKEN_KEY, token.trim());
-    else window.localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    // Token bleibt nur im Formular.
-  }
-}
 
 export async function gethypedConfigured(): Promise<boolean> {
   try {
@@ -62,12 +43,14 @@ export function emptyIngest(error?: string | null): ScraperIngest {
     rejected: 0,
     skipped: 0,
     withImage: 0,
+    withoutImage: 0,
     imagesConfirmed: null,
     imagesMissing: 0,
     batches: [],
     error: error ?? null,
     rejectedItems: [],
     skippedItems: [],
+    imagelessItems: [],
   });
 }
 
@@ -206,6 +189,7 @@ export function normalizeIngest(value: unknown): ScraperIngest | null {
     rejected: num(row.rejected),
     skipped: num(row.skipped),
     withImage: num(row.withImage),
+    withoutImage: num(row.withoutImage),
     imagesConfirmed,
     imagesMissing: num(row.imagesMissing),
     batches: Array.isArray(row.batches)
@@ -214,6 +198,7 @@ export function normalizeIngest(value: unknown): ScraperIngest | null {
     error: typeof row.error === "string" ? row.error : null,
     rejectedItems: asNamedReasons(row.rejectedItems),
     skippedItems: asNamedReasons(row.skippedItems),
+    imagelessItems: asNamedReasons(row.imagelessItems),
   });
 }
 

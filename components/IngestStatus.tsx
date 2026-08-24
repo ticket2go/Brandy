@@ -5,7 +5,11 @@ import type { ReactNode } from "react";
 import type { ScraperIngest } from "@/lib/gethyped-ingest";
 
 export default function IngestStatus({ ingest }: { ingest: ScraperIngest }) {
-  const issues = [...ingest.rejectedItems, ...ingest.skippedItems].slice(0, 8);
+  const issues = [
+    ...ingest.rejectedItems,
+    ...ingest.skippedItems,
+    ...ingest.imagelessItems,
+  ].slice(0, 8);
   const tone =
     ingest.outcome === "success"
       ? "green"
@@ -69,6 +73,9 @@ export default function IngestStatus({ ingest }: { ingest: ScraperIngest }) {
           }
         >
           {imageBadge(ingest)}
+        </Badge>
+        <Badge tone={ingest.withoutImage > 0 ? "amber" : "muted"}>
+          {ingest.withoutImage} ohne image_url
         </Badge>
       </div>
       <p className="text-xs text-black/40">

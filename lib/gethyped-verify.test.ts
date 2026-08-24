@@ -40,6 +40,17 @@ test("ordnet den Gesamtstatus nach Events und Bildern", () => {
   assert.equal(
     ingestOutcomeOf({
       sent: 10,
+      accepted: 10,
+      rejected: 0,
+      withImage: 0,
+      imagesConfirmed: null,
+      error: null,
+    }),
+    "partial"
+  );
+  assert.equal(
+    ingestOutcomeOf({
+      sent: 10,
       accepted: 0,
       rejected: 0,
       withImage: 0,
@@ -55,11 +66,45 @@ test("ordnet den Gesamtstatus nach Events und Bildern", () => {
       rejected: 0,
       skipped: 0,
       withImage: 10,
+      withoutImage: 0,
       imagesConfirmed: 10,
       imagesMissing: 0,
       error: null,
       outcome: "success",
     }),
     /Alles erfolgreich/
+  );
+});
+
+test("benennt fehlende Bilder in der Zusammenfassung", () => {
+  assert.match(
+    ingestSummaryOf({
+      sent: 10,
+      accepted: 10,
+      rejected: 0,
+      skipped: 0,
+      withImage: 0,
+      withoutImage: 10,
+      imagesConfirmed: null,
+      imagesMissing: 0,
+      error: null,
+      outcome: "partial",
+    }),
+    /Kein Event hatte ein Bild/
+  );
+  assert.match(
+    ingestSummaryOf({
+      sent: 10,
+      accepted: 10,
+      rejected: 0,
+      skipped: 0,
+      withImage: 7,
+      withoutImage: 3,
+      imagesConfirmed: 7,
+      imagesMissing: 0,
+      error: null,
+      outcome: "partial",
+    }),
+    /3 Events ohne Bild/
   );
 });

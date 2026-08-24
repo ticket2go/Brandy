@@ -11,7 +11,8 @@ import ScraperPreview from "@/components/ScraperPreview";
 import SearchStatus from "@/components/SearchStatus";
 import Title from "@/components/Title";
 import UpdateStatus from "@/components/UpdateStatus";
-import { emptyIngest, ingestToGethyped, loadGethypedToken } from "@/lib/gethyped-ingest";
+import { emptyIngest, ingestToGethyped } from "@/lib/gethyped-ingest";
+import { fetchStoredToken } from "@/lib/gethyped-token";
 import {
   makeIngestProgress,
   type IngestProgress,
@@ -181,7 +182,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     try {
       const ingest = await ingestToGethyped(
         events,
-        loadGethypedToken(),
+        await fetchStoredToken(),
         setIngestProgress
       );
       persist(updateScraper(scraper.id, { lastIngest: ingest }));
