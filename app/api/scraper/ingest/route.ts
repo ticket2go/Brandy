@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
 
 import { prepareGethypedImages } from "@/lib/gethyped-images";
+import { emptyIngest, finalizeIngest, type ScraperIngest } from "@/lib/gethyped-ingest";
 import {
   chunkEvents,
   mapScrapedEvents,
   type GethypedEvent,
 } from "@/lib/gethyped-map";
-import type { ScraperIngest } from "@/lib/gethyped-ingest";
+import { verifyBatchImages } from "@/lib/gethyped-verify";
+import {
+  ingestProgressLabel,
+  makeIngestProgress,
+  type IngestProgress,
+} from "@/lib/ingest-progress";
 import type { ScrapedEvent } from "@/lib/scraped-event";
 
 export const runtime = "nodejs";
@@ -46,52 +52,100 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Keine Events zum Senden." }, { status: 400 });
   }
 
-  const mapped = mapScrapedEvents(events);
-  const prepared = await prepareGethypedImages(mapped.accepted);
-  const result: ScraperIngest = {
-    at: new Date().toISOString(),
-    sent: prepared.events.length,
-    accepted: 0,
-    rejected: 0,
-    skipped: mapped.skipped.length,
-    withImage: prepared.withImage,
-    batches: [],
-    error: null,
-    rejectedItems: [],
-    skippedItems: mapped.skipped.slice(0, 40),
-  };
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (payload: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+      };
+      const progress = (next: IngestProgress) => {
+        send({
+          type: "progress",
+          ...next,
+          label: next.label || ingestProgressLabel(next),
+        });
+      };
 
-  if (prepared.events.length === 0) {
-    result.error = "Kein Event erfüllt die GetHyped-Regeln.";
-    return NextResponse.json(result, { status: 422 });
-  }
+      const result = emptyIngest();
+      try {
+        progress(makeIngestProgress("map"));
+        const mapped = mapScrapedEvents(events);
+        result.skipped = mapped.skipped.length;
+        result.skippedItems = mapped.skipped.slice(0, 40);
 
-  const base = ingestBase();
-  const runId = newId();
-  const chunks = chunkEvents(prepared.events, MAX_EVENTS, MAX_BYTES);
+        progress(makeIngestProgress("images", 0, mapped.accepted.length));
+        const prepared = await prepareGethypedImages(
+          mapped.accepted,
+          (done, total) => progress(makeIngestProgress("images", done, total))
+        );
+        result.sent = prepared.events.length;
+        result.withImage = prepared.withImage;
 
-  try {
-    for (const [index, chunk] of chunks.entries()) {
-      const sent = await postChunk(base, token, chunk, `${runId}-${index + 1}`);
-      if (sent.batchId) result.batches.push(sent.batchId);
-      result.accepted += sent.accepted;
-      result.rejected += sent.rejected;
-      result.rejectedItems.push(...sent.rejectedItems);
-      if (sent.replayed) {
-        result.error = result.error ?? "Dieselbe Lieferung wurde erneut bestätigt.";
+        if (prepared.events.length === 0) {
+          result.error = "Kein Event erfüllt die GetHyped-Regeln.";
+          send({ type: "result", ingest: finalizeIngest(result) });
+          controller.close();
+          return;
+        }
+
+        const base = ingestBase();
+        const runId = newId();
+        const chunks = chunkEvents(prepared.events, MAX_EVENTS, MAX_BYTES);
+        progress(makeIngestProgress("send", 0, chunks.length));
+
+        for (const [index, chunk] of chunks.entries()) {
+          const sent = await postChunk(base, token, chunk, `${runId}-${index + 1}`);
+          if (sent.batchId) result.batches.push(sent.batchId);
+          result.accepted += sent.accepted;
+          result.rejected += sent.rejected;
+          result.rejectedItems.push(...sent.rejectedItems);
+          if (sent.replayed) {
+            result.error =
+              result.error ?? "Dieselbe Lieferung wurde erneut bestätigt.";
+          }
+          progress(makeIngestProgress("send", index + 1, chunks.length));
+        }
+
+        if (result.accepted === 0 && result.rejected > 0) {
+          result.error = result.error ?? "GetHyped hat alle Events abgelehnt.";
+        }
+
+        progress(makeIngestProgress("verify", 0, Math.max(1, result.batches.length)));
+        const check = await verifyBatchImages(
+          base,
+          token,
+          result.batches,
+          (done, total) => progress(makeIngestProgress("verify", done, total))
+        );
+        if (check.checked) {
+          result.imagesConfirmed = check.confirmed;
+          result.imagesMissing = check.missing;
+        } else if (result.withImage > 0 && result.accepted > 0) {
+          result.imagesConfirmed = null;
+          result.imagesMissing = 0;
+        }
+
+        progress(makeIngestProgress("done", 1, 1));
+        send({ type: "result", ingest: finalizeIngest(result) });
+      } catch (error) {
+        result.error =
+          error instanceof Error
+            ? error.message
+            : "Senden an GetHyped ist fehlgeschlagen.";
+        send({ type: "result", ingest: finalizeIngest(result) });
+      } finally {
+        controller.close();
       }
-    }
-  } catch (error) {
-    result.error =
-      error instanceof Error ? error.message : "Senden an GetHyped ist fehlgeschlagen.";
-    return NextResponse.json(result, { status: 502 });
-  }
+    },
+  });
 
-  if (result.accepted === 0 && result.rejected > 0) {
-    result.error = result.error ?? "GetHyped hat alle Events abgelehnt.";
-  }
-
-  return NextResponse.json(result, { status: 200 });
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
 }
 
 function readEnvToken(): string {

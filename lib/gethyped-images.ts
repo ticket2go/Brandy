@@ -21,7 +21,8 @@ export type PreparedImages = {
  * wird es aus Rohdaten (heroImage, Name, Ticketlink) nachgezogen.
  */
 export async function prepareGethypedImages(
-  events: GethypedEvent[]
+  events: GethypedEvent[],
+  onProgress?: (done: number, total: number) => void
 ): Promise<PreparedImages> {
   const jobs = new Map<string, { listing: string | null; extra: Extra }>();
   for (const event of events) {
@@ -35,6 +36,8 @@ export async function prepareGethypedImages(
   let upgraded = 0;
   let rehosted = 0;
   const entries = [...jobs.entries()];
+  let finished = 0;
+  onProgress?.(0, entries.length);
 
   for (let index = 0; index < entries.length; index += CONCURRENCY) {
     await Promise.all(
@@ -51,9 +54,11 @@ export async function prepareGethypedImages(
         if (hosted) {
           rehosted += 1;
           resolved.set(key, hosted);
-          return;
+        } else {
+          resolved.set(key, best);
         }
-        resolved.set(key, best);
+        finished += 1;
+        onProgress?.(finished, entries.length);
       })
     );
   }

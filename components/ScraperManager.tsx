@@ -6,9 +6,14 @@ import ConfirmDialog from "./ConfirmDialog";
 import GethypedTokenField from "./GethypedTokenField";
 import ScraperCard from "./ScraperCard";
 import {
+  emptyIngest,
   ingestToGethyped,
   loadGethypedToken,
 } from "@/lib/gethyped-ingest";
+import {
+  makeIngestProgress,
+  type IngestProgress,
+} from "@/lib/ingest-progress";
 import { runScraper, scrapeScraperFollowUps, updateScraperEntries } from "@/lib/run-scraper";
 import type { SearchProgress } from "@/lib/search-progress";
 import {
@@ -30,6 +35,9 @@ export default function ScraperManager() {
   const [followUpId, setFollowUpId] = useState<string | null>(null);
   const [updateId, setUpdateId] = useState<string | null>(null);
   const [ingestId, setIngestId] = useState<string | null>(null);
+  const [ingestProgress, setIngestProgress] = useState<
+    Record<string, IngestProgress>
+  >({});
   const [searchProgress, setSearchProgress] = useState<
     Record<string, SearchProgress>
   >({});
@@ -277,8 +285,18 @@ export default function ScraperManager() {
       scraper.preview.length > 0 ? scraper.preview : scraper.events;
     if (events.length === 0) return;
     setIngestId(scraper.id);
+    setIngestProgress((prev) => ({
+      ...prev,
+      [scraper.id]: makeIngestProgress("map"),
+    }));
     try {
-      const ingest = await ingestToGethyped(events, loadGethypedToken());
+      const ingest = await ingestToGethyped(
+        events,
+        loadGethypedToken(),
+        (progress) => {
+          setIngestProgress((prev) => ({ ...prev, [scraper.id]: progress }));
+        }
+      );
       const next = updateScraper(scraper.id, { lastIngest: ingest });
       if (next) {
         setScrapers((prev) =>
@@ -287,21 +305,11 @@ export default function ScraperManager() {
       }
     } catch (error) {
       const next = updateScraper(scraper.id, {
-        lastIngest: {
-          at: new Date().toISOString(),
-          sent: 0,
-          accepted: 0,
-          rejected: 0,
-          skipped: 0,
-          withImage: 0,
-          batches: [],
-          error:
-            error instanceof Error
-              ? error.message
-              : "Senden an GetHyped ist fehlgeschlagen.",
-          rejectedItems: [],
-          skippedItems: [],
-        },
+        lastIngest: emptyIngest(
+          error instanceof Error
+            ? error.message
+            : "Senden an GetHyped ist fehlgeschlagen."
+        ),
       });
       if (next) {
         setScrapers((prev) =>
@@ -310,6 +318,11 @@ export default function ScraperManager() {
       }
     } finally {
       setIngestId(null);
+      setIngestProgress((prev) => {
+        const next = { ...prev };
+        delete next[scraper.id];
+        return next;
+      });
     }
   };
 
@@ -357,6 +370,7 @@ export default function ScraperManager() {
                 updating={updateId === scraper.id}
                 ingesting={ingestId === scraper.id}
                 searchProgress={searchProgress[scraper.id] ?? null}
+                ingestProgress={ingestProgress[scraper.id] ?? null}
                 onRun={() => handleRun(scraper)}
                 onFollowUps={() => handleFollowUps(scraper)}
                 onUpdate={() => handleUpdate(scraper)}

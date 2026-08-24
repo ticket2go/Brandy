@@ -5,12 +5,17 @@ import { useEffect, useRef, useState } from "react";
 
 import FollowUpStatus from "@/components/FollowUpStatus";
 import GethypedTokenField from "@/components/GethypedTokenField";
+import IngestLiveStatus from "@/components/IngestLiveStatus";
 import IngestStatus from "@/components/IngestStatus";
 import ScraperPreview from "@/components/ScraperPreview";
 import SearchStatus from "@/components/SearchStatus";
 import Title from "@/components/Title";
 import UpdateStatus from "@/components/UpdateStatus";
-import { ingestToGethyped, loadGethypedToken } from "@/lib/gethyped-ingest";
+import { emptyIngest, ingestToGethyped, loadGethypedToken } from "@/lib/gethyped-ingest";
+import {
+  makeIngestProgress,
+  type IngestProgress,
+} from "@/lib/ingest-progress";
 import { canResumeFollowUp, followUpProgressOf } from "@/lib/follow-up";
 import {
   makeSearchProgress,
@@ -40,6 +45,9 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
   const [following, setFollowing] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [ingesting, setIngesting] = useState(false);
+  const [ingestProgress, setIngestProgress] = useState<IngestProgress | null>(
+    null
+  );
   const [searchProgress, setSearchProgress] = useState<SearchProgress | null>(
     null
   );
@@ -169,31 +177,27 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
       scraper.preview.length > 0 ? scraper.preview : scraper.events;
     if (events.length === 0) return;
     setIngesting(true);
+    setIngestProgress(makeIngestProgress("map"));
     try {
-      const ingest = await ingestToGethyped(events, loadGethypedToken());
+      const ingest = await ingestToGethyped(
+        events,
+        loadGethypedToken(),
+        setIngestProgress
+      );
       persist(updateScraper(scraper.id, { lastIngest: ingest }));
     } catch (error) {
       persist(
         updateScraper(scraper.id, {
-          lastIngest: {
-            at: new Date().toISOString(),
-            sent: 0,
-            accepted: 0,
-            rejected: 0,
-            skipped: 0,
-            withImage: 0,
-            batches: [],
-            error:
-              error instanceof Error
-                ? error.message
-                : "Senden an GetHyped ist fehlgeschlagen.",
-            rejectedItems: [],
-            skippedItems: [],
-          },
+          lastIngest: emptyIngest(
+            error instanceof Error
+              ? error.message
+              : "Senden an GetHyped ist fehlgeschlagen."
+          ),
         })
       );
     } finally {
       setIngesting(false);
+      setIngestProgress(null);
     }
   };
 
@@ -257,7 +261,11 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             <p className="mt-2 truncate text-sm text-black/50" title={scraper.url}>
               {scraper.url}
             </p>
-            {loading || (updating && searchProgress && !following) ? (
+            {ingesting && ingestProgress ? (
+              <div className="mt-3 max-w-md">
+                <IngestLiveStatus progress={ingestProgress} />
+              </div>
+            ) : loading || (updating && searchProgress && !following) ? (
               <div className="mt-3 max-w-md">
                 <SearchStatus
                   progress={searchProgress ?? makeSearchProgress("search", 0, null)}
@@ -321,7 +329,9 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
               disabled={busy || scraper.preview.length === 0}
               className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
             >
-              {ingesting ? "Senden …" : "An GetHyped senden"}
+              {ingesting
+                ? `${ingestProgress?.percent ?? 0} %`
+                : "An GetHyped senden"}
             </button>
           </div>
         </div>
@@ -341,7 +351,16 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
         ) : null}
 
         {scraper.lastUpdate ? <UpdateStatus update={scraper.lastUpdate} /> : null}
-        {scraper.lastIngest ? <IngestStatus ingest={scraper.lastIngest} /> : null}
+        {ingesting && ingestProgress ? (
+          <div className="rounded-2xl border border-black/10 px-4 py-3">
+            <p className="mb-2 text-sm font-medium text-black">
+              Wird an GetHyped übertragen
+            </p>
+            <IngestLiveStatus progress={ingestProgress} />
+          </div>
+        ) : scraper.lastIngest ? (
+          <IngestStatus ingest={scraper.lastIngest} />
+        ) : null}
 
         {followUp ? (
           <FollowUpStatus
