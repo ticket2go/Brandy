@@ -87,23 +87,44 @@ export async function scrapeScraperFollowUps(
       selectAll: true,
       itemIds: [],
     };
-    const selected = applySelection(events, selection);
-    return updateScraper(scraper.id, {
-      preview: events,
-      selection,
-      events: selected,
-      entryCount: selected.length,
-      lastRunAt: new Date().toISOString(),
-      error: events.length > 0 ? null : error,
-      warning,
-      followUp:
-        groups.length > 0
-          ? {
-              running,
-              groups,
-            }
-          : null,
-    });
+    const selected = running ? [] : applySelection(events, selection);
+    try {
+      return updateScraper(scraper.id, {
+        preview: events,
+        selection,
+        ...(running
+          ? { entryCount: events.length }
+          : { events: selected, entryCount: selected.length }),
+        lastRunAt: new Date().toISOString(),
+        error: events.length > 0 ? null : error,
+        warning,
+        followUp:
+          groups.length > 0
+            ? {
+                running,
+                groups,
+              }
+            : null,
+      });
+    } catch {
+      return {
+        ...scraper,
+        preview: events,
+        selection,
+        events: running ? scraper.events : selected,
+        entryCount: events.length,
+        lastRunAt: new Date().toISOString(),
+        error: events.length > 0 ? null : error,
+        warning,
+        followUp:
+          groups.length > 0
+            ? {
+                running,
+                groups,
+              }
+            : null,
+      };
+    }
   };
 
   const emit = (
@@ -129,7 +150,19 @@ export async function scrapeScraperFollowUps(
         signal,
         groups: resumeGroups,
         onProgress: (progress, events) => {
-          emit(progress, events, null, null);
+          try {
+            emit(progress, events, null, null);
+          } catch {
+            onProgress?.(progress, {
+              ...scraper,
+              preview: events,
+              followUp: {
+                running: progress.running,
+                groups: progress.groups,
+              },
+              entryCount: events.length,
+            });
+          }
         },
       });
       if (signal?.aborted) {

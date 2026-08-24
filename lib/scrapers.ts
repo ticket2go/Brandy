@@ -1,3 +1,4 @@
+import { withoutListingThumb } from "@/lib/eventim-artwork";
 import {
   isFollowUpGroup,
   type FollowUpGroup,
@@ -40,6 +41,8 @@ export type Scraper = {
 const STORAGE_KEY = "eventscraper.scrapers";
 const UPDATED_EVENT = "eventscraper-updated";
 
+let memory: Scraper[] | null = null;
+
 export function defaultSelection(): ScraperSelection {
   return {
     selectAll: false,
@@ -67,20 +70,46 @@ export function newScraper(name: string, url: string): Scraper {
 
 export function loadScrapers(): Scraper[] {
   if (typeof window === "undefined") return [];
+  if (memory) return memory;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
+    if (!raw) {
+      memory = [];
+      return memory;
+    }
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isScraper).map(withDefaults);
+    if (!Array.isArray(parsed)) {
+      memory = [];
+      return memory;
+    }
+    memory = parsed.filter(isScraper).map(withDefaults);
+    return memory;
   } catch {
-    return [];
+    memory = [];
+    return memory;
   }
 }
 
 export function saveScrapers(scrapers: Scraper[]): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(scrapers));
+  memory = scrapers;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(scrapers));
+  } catch {
+    try {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(
+          scrapers.map((item) => ({
+            ...item,
+            events: [],
+          }))
+        )
+      );
+    } catch {
+      // Speicher voll: Stand bleibt im Speicher, der Lauf geht weiter.
+    }
+  }
   window.dispatchEvent(new Event(UPDATED_EVENT));
 }
 
@@ -143,7 +172,7 @@ function pickFields(event: ScrapedEvent, fields: ScraperField[]): ScrapedEvent {
     date: keep.has("date") ? event.date : null,
     time: keep.has("time") ? event.time : null,
     startsAt: event.startsAt,
-    heroImage: keep.has("heroImage") ? event.heroImage : null,
+    heroImage: keep.has("heroImage") ? withoutListingThumb(event.heroImage) : null,
     ticketUrl: keep.has("ticketUrl") ? event.ticketUrl : null,
     price: keep.has("price") ? event.price : null,
     productGroupId: event.productGroupId,
@@ -157,8 +186,12 @@ function normalizeFields(fields: ScraperField[]): ScraperField[] {
 }
 
 function withDefaults(row: Scraper): Scraper {
-  const events = Array.isArray(row.events) ? row.events.filter(isEvent) : [];
-  const preview = Array.isArray(row.preview) ? row.preview.filter(isEvent) : [];
+  const events = Array.isArray(row.events)
+    ? row.events.filter(isEvent).map(withoutStoredThumb)
+    : [];
+  const preview = Array.isArray(row.preview)
+    ? row.preview.filter(isEvent).map(withoutStoredThumb)
+    : [];
   return {
     id: row.id,
     name: row.name,
@@ -212,6 +245,13 @@ function isScraper(value: unknown): value is Scraper {
     typeof row.url === "string" &&
     typeof row.createdAt === "string"
   );
+}
+
+function withoutStoredThumb(event: ScrapedEvent): ScrapedEvent {
+  return {
+    ...event,
+    heroImage: withoutListingThumb(event.heroImage),
+  };
 }
 
 function isEvent(value: unknown): value is ScrapedEvent {

@@ -1,8 +1,5 @@
-import {
-  absolute,
-  artworkContentImage,
-  parseEventimPage,
-} from "@/lib/eventim-parse";
+import { applyHeroImages, resolveHeroImage, withoutListingThumb } from "@/lib/eventim-artwork";
+import { absolute, parseEventimPage } from "@/lib/eventim-parse";
 import {
   eventsForGroup,
   followUpGroupId,
@@ -36,8 +33,6 @@ type ListedEvent = ScrapedEvent & {
 
 const PRODUCTS_URL =
   "https://public-api.eventim.com/websearch/search/api/exploration/v1/products";
-const ATTRACTIONS_URL =
-  "https://public-api.eventim.com/websearch/search/api/exploration/v1/attractions";
 
 const WEB_IDS: Record<string, string> = {
   de: "web__eventim-de",
@@ -85,9 +80,10 @@ export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
     };
   }
 
-  const unique = sortEvents(dedupeEvents(events)).map(withDisplayFields);
+  const unique = sortEvents(dedupeEvents(events));
+  await applyHeroImages(unique);
   return {
-    events: unique,
+    events: unique.map(withDisplayFields),
     warning:
       totalResults != null && totalResults > unique.length
         ? `Es wurden ${unique.length} von ${totalResults} Einträgen der Seite geladen.`
@@ -209,7 +205,14 @@ async function expandFollowUpPages(
       : listFollowUpGroups(events);
 
   const emit = (running: boolean) => {
-    options?.onProgress?.(followUpProgressOf(groups, current, running), current);
+    try {
+      options?.onProgress?.(
+        followUpProgressOf(groups, current, running),
+        current
+      );
+    } catch {
+      // Persist-Fehler dürfen den Lauf nicht stoppen.
+    }
   };
 
   emit(groups.some((group) => group.status !== "done"));
@@ -306,138 +309,17 @@ async function scrapeOneFollowUpGroup(
     params.set("product_group_id", groupId);
   });
   const source = follow.events.length > 1 ? follow.events : originals;
-  const artwork =
-    (await artworkImageForGroup(originals, source, pageUrl)) ??
-    (await fallbackArtworkImage(originals[0]?.heroImage ?? null));
+  const artwork = await resolveHeroImage(
+    originals[0]?.heroImage ?? source[0]?.heroImage ?? null
+  );
   return source.map((event) =>
     withDisplayFields({
       ...event,
       name: event.name || originals[0]?.name || event.name,
-      heroImage: artwork ?? event.heroImage,
+      heroImage: artwork,
       productGroupId: groupId,
     })
   );
-}
-
-function headerImageFrom(listing: string | null): string | null {
-  if (!listing) return null;
-  if (!/\/teaser\/\d+x\d+\//i.test(listing)) return null;
-  let next = listing.replace(/\/teaser\/\d+x\d+\//i, "/teaser/artworks/");
-  if (/-tickets-\d+\.(jpe?g|png|webp)$/i.test(next)) {
-    next = next.replace(/-tickets-\d+\.(jpe?g|png|webp)$/i, "-tickets-header.$1");
-  } else {
-    next = next.replace(/-\d{4}\.(jpe?g|png|webp)$/i, "-header.$1");
-  }
-  return next === listing ? null : next;
-}
-
-async function fallbackArtworkImage(
-  listing: string | null
-): Promise<string | null> {
-  const guessed = headerImageFrom(listing);
-  if (!guessed) return null;
-  return (await imageExists(guessed)) ? guessed : null;
-}
-
-async function imageExists(url: string): Promise<boolean> {
-  try {
-    const response = await fetch(url, {
-      method: "HEAD",
-      redirect: "follow",
-      cache: "no-store",
-      signal: AbortSignal.timeout(5000),
-      headers:
-        typeof window === "undefined"
-          ? { accept: "image/*,*/*;q=0.8" }
-          : { accept: "image/*,*/*;q=0.8", "accept-language": "de-DE,de;q=0.9" },
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function artworkImageForGroup(
-  originals: ScrapedEvent[],
-  followEvents: ScrapedEvent[],
-  pageUrl: URL
-): Promise<string | null> {
-  const urls = await artworkPageUrls(originals, followEvents, pageUrl);
-  for (const url of urls) {
-    const html = await fetchHtml(url);
-    if (!html) continue;
-    const image = artworkContentImage(html, url);
-    if (image) return image;
-  }
-  return null;
-}
-
-async function artworkPageUrls(
-  originals: ScrapedEvent[],
-  followEvents: ScrapedEvent[],
-  pageUrl: URL
-): Promise<string[]> {
-  const urls: string[] = [];
-  const seen = new Set<string>();
-  const add = (value: string | null | undefined) => {
-    if (!value) return;
-    try {
-      const next = new URL(value, pageUrl.origin).toString();
-      if (seen.has(next)) return;
-      seen.add(next);
-      urls.push(next);
-    } catch {
-      // Ungültige URL ignorieren.
-    }
-  };
-
-  for (const event of [...originals, ...followEvents]) {
-    const link = event.ticketUrl ?? "";
-    if (/\/(artist|attraction|eventseries)\//i.test(link)) add(link);
-  }
-  const groupId =
-    originals[0]?.productGroupId ?? followEvents[0]?.productGroupId;
-  if (groupId) add(`${pageUrl.origin}/eventseries/${groupId}/`);
-  add(followEvents[0]?.ticketUrl);
-  add(originals[0]?.ticketUrl);
-
-  const artist = await artistPageUrl(originals[0]?.name ?? "", pageUrl);
-  if (artist) urls.unshift(artist);
-  return urls;
-}
-
-async function artistPageUrl(
-  name: string,
-  pageUrl: URL
-): Promise<string | null> {
-  const term = name.replace(/\s+\d{4}$/, "").trim();
-  if (!term) return null;
-  try {
-    const tld = pageUrl.hostname.split(".").pop()?.toLowerCase() ?? "de";
-    const params = new URLSearchParams({
-      webId: WEB_IDS[tld] ?? WEB_IDS.de,
-      language: tld === "de" || tld === "at" || tld === "ch" ? "de" : "en",
-      search_term: term,
-      top: "8",
-    });
-    const payload = await fetchJson(ATTRACTIONS_URL, params, pageUrl);
-    const record = asRecord(payload);
-    const items = Array.isArray(record?.attractions) ? record.attractions : [];
-    const needle = term.toLowerCase();
-    let fallback: string | null = null;
-    for (const raw of items) {
-      const item = asRecord(raw);
-      if (!item) continue;
-      const title = (asString(item.name) ?? "").toLowerCase();
-      const link = absolute(linkOf(item), pageUrl.origin);
-      if (!link) continue;
-      if (title === needle) return link;
-      if (!fallback && title.includes(needle)) fallback = link;
-    }
-    return fallback;
-  } catch {
-    return null;
-  }
 }
 
 async function fetchEventsFromHtml(pageUrl: URL): Promise<ScrapedEvent[]> {
@@ -667,6 +549,7 @@ function priceOf(product: Record<string, unknown>): string | null {
 function withDisplayFields(event: ScrapedEvent): ScrapedEvent {
   return {
     ...event,
+    heroImage: withoutListingThumb(event.heroImage),
     date: formatDate(event.startsAt),
     time: formatTime(event.startsAt),
     location: event.location ?? combineLocation(event.venue, event.city),

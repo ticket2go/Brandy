@@ -236,10 +236,10 @@ function EventList({
                   <img
                     src={event.heroImage}
                     alt=""
-                    className="h-16 w-16 rounded-xl object-cover"
+                    className="h-16 w-28 rounded-xl object-cover"
                   />
                 ) : (
-                  <span className="flex h-16 w-16 items-center justify-center rounded-xl bg-black/5 text-[10px] text-black/30">
+                  <span className="flex h-16 w-28 items-center justify-center rounded-xl bg-black/5 text-[10px] text-black/30">
                     Bild
                   </span>
                 )}
