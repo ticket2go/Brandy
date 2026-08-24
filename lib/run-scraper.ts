@@ -19,9 +19,7 @@ export async function loadScraperPreview(scraper: Scraper): Promise<Scraper | nu
   const firstLoad = scraper.preview.length === 0;
   return updateScraper(scraper.id, {
     preview: result.events,
-    ...(firstLoad
-      ? { events: [], entryCount: 0, selection: scraper.selection }
-      : {}),
+    ...(firstLoad ? { events: [], entryCount: 0 } : {}),
     lastRunAt: new Date().toISOString(),
     error: result.events.length > 0 ? null : result.error ?? result.warning,
   });
