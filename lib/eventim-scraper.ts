@@ -334,7 +334,20 @@ function searchTermOf(pageUrl: URL): string | null {
     pageUrl.searchParams.get("search_term") ??
     pageUrl.searchParams.get("q");
   if (term?.trim()) return term.trim();
-  return cityOf(pageUrl);
+  const city = cityOf(pageUrl);
+  if (city) return city;
+  return slugSearchTerm(pageUrl);
+}
+
+function slugSearchTerm(pageUrl: URL): string | null {
+  const segments = pageUrl.pathname.split("/").filter(Boolean);
+  const type = segments[0]?.toLowerCase();
+  if (!type || !["artist", "attraction", "eventseries", "event"].includes(type)) {
+    return null;
+  }
+  const slug = decodeURIComponent(segments[1] ?? "").replace(/-\d+$/, "");
+  const name = slug.replace(/-/g, " ").trim();
+  return name || null;
 }
 
 function cityOf(pageUrl: URL): string | null {
@@ -352,16 +365,15 @@ async function fetchJson(
   params: URLSearchParams,
   pageUrl: URL
 ): Promise<unknown> {
-  const response = await fetch(`${endpoint}?${params.toString()}`, {
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    headers: apiHeaders(pageUrl),
-  });
-  const body = await response.text();
-  if (!response.ok || /access denied|permission to access/i.test(body)) {
+  const { status, body } = await eventimGet(
+    `${endpoint}?${params.toString()}`,
+    apiHeaders(pageUrl)
+  );
+  if (status !== 200 || /access denied|permission to access/i.test(body)) {
     throw new Error(
-      response.status === 403 || /access denied/i.test(body)
+      status === 403 || /access denied/i.test(body)
         ? "Eventim hat die Anfrage blockiert."
-        : `Eventim API HTTP ${response.status}`
+        : `Eventim API HTTP ${status}`
     );
   }
   try {
@@ -373,37 +385,44 @@ async function fetchJson(
 
 async function fetchHtml(url: string): Promise<string | null> {
   try {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      redirect: "follow",
-      headers: pageHeaders(),
-    });
-    if (!response.ok) return null;
-    return await response.text();
+    const { status, body } = await eventimGet(url, pageHeaders(), 15000);
+    if (status < 200 || status >= 300) return null;
+    if (/access denied|permission to access/i.test(body)) return null;
+    return body;
   } catch {
     return null;
   }
 }
 
+async function eventimGet(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs = REQUEST_TIMEOUT_MS
+): Promise<{ status: number; body: string }> {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(timeoutMs),
+    redirect: "follow",
+    cache: "no-store",
+    headers,
+  });
+  return { status: response.status, body: await response.text() };
+}
+
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
 
-// Eventim liegt hinter einem Bot-Schutz, der Requests ohne Client-Hints
-// und Sec-Fetch-Header mit 403 abweist.
-function clientHintHeaders(): Record<string, string> {
-  return {
-    "sec-ch-ua": '"Chromium";v="128", "Not(A:Brand";v="24"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"macOS"',
-    "user-agent": USER_AGENT,
-  };
-}
-
+// Im Browser nur CORS-safelisted Headers setzen. Custom-Header wie
+// sec-ch-ua würden ein OPTIONS-Preflight auslösen, das Eventim mit 403
+// beantwortet. Der echte Browser ergänzt Client-Hints selbst.
 function apiHeaders(pageUrl: URL): Record<string, string> {
-  return {
-    ...clientHintHeaders(),
+  const headers: Record<string, string> = {
     accept: "application/json, text/plain, */*",
     "accept-language": "de-DE,de;q=0.9,en;q=0.8",
+  };
+  if (typeof window !== "undefined") return headers;
+  return {
+    ...headers,
+    ...clientHintHeaders(),
     origin: pageUrl.origin,
     referer: `${pageUrl.origin}/`,
     "sec-fetch-dest": "empty",
@@ -413,15 +432,28 @@ function apiHeaders(pageUrl: URL): Record<string, string> {
 }
 
 function pageHeaders(): Record<string, string> {
-  return {
-    ...clientHintHeaders(),
+  const headers: Record<string, string> = {
     accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "accept-language": "de-DE,de;q=0.9,en;q=0.8",
+  };
+  if (typeof window !== "undefined") return headers;
+  return {
+    ...headers,
+    ...clientHintHeaders(),
     "sec-fetch-dest": "document",
     "sec-fetch-mode": "navigate",
     "sec-fetch-site": "none",
     "sec-fetch-user": "?1",
     "upgrade-insecure-requests": "1",
+  };
+}
+
+function clientHintHeaders(): Record<string, string> {
+  return {
+    "sec-ch-ua": '"Chromium";v="128", "Not(A:Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
+    "user-agent": USER_AGENT,
   };
 }
 
