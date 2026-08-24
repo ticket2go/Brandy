@@ -78,17 +78,20 @@ export async function resolveHeroImage(
 ): Promise<string | null> {
   const direct = withoutListingThumb(listing);
   if (direct) return direct;
-  const cacheKey = `${listing ?? ""}|${extra?.name ?? ""}|${extra?.startsAt ?? ""}|${extra?.ticketUrl ?? ""}`;
+  const cacheKey = `${listing ?? ""}|${extra?.name ?? ""}|${extra?.ticketUrl ?? ""}|${extra?.fetchPage !== false}|${extra?.quick === true}`;
   if (heroCache.has(cacheKey)) return heroCache.get(cacheKey) ?? null;
 
-  const candidates = heroImageCandidates(listing, extra);
+  const canRewrite = Boolean(listing && /\/teaser\/\d+x\d+\//i.test(listing));
   let found: string | null = null;
-  const batchSize = 6;
-  for (let index = 0; index < candidates.length && !found; index += batchSize) {
-    const batch = candidates.slice(index, index + batchSize);
-    const hits = await Promise.all(batch.map((url) => imageExists(url)));
-    const hit = hits.findIndex(Boolean);
-    if (hit >= 0) found = batch[hit] ?? null;
+  if (canRewrite || extra?.quick !== true) {
+    const candidates = heroImageCandidates(listing, extra);
+    const batchSize = 6;
+    for (let index = 0; index < candidates.length && !found; index += batchSize) {
+      const batch = candidates.slice(index, index + batchSize);
+      const hits = await Promise.all(batch.map((url) => imageExists(url)));
+      const hit = hits.findIndex(Boolean);
+      if (hit >= 0) found = batch[hit] ?? null;
+    }
   }
 
   if (!found && extra?.fetchPage !== false) {
@@ -113,7 +116,7 @@ export async function applyHeroImages(
   const quick = options?.quick === true;
   const jobs = new Map<string, HeroExtra & { listing: string | null }>();
   for (const event of events) {
-    const key = jobKey(event, fetchPages);
+    const key = jobKey(event);
     if (jobs.has(key)) continue;
     jobs.set(key, {
       listing: event.heroImage,
@@ -142,23 +145,15 @@ export async function applyHeroImages(
 
   for (const event of events) {
     event.heroImage =
-      resolved.get(jobKey(event, fetchPages)) ??
+      resolved.get(jobKey(event)) ??
       withoutListingThumb(event.heroImage);
   }
 }
 
-function jobKey(
-  event: {
-    heroImage: string | null;
-    name?: string | null;
-    startsAt?: string | null;
-    ticketUrl?: string | null;
-  },
-  fetchPages: boolean
-): string {
-  if (fetchPages) {
-    return `${event.heroImage ?? ""}|${event.name ?? ""}|${event.ticketUrl ?? ""}`;
-  }
+function jobKey(event: {
+  heroImage: string | null;
+  name?: string | null;
+}): string {
   if (event.heroImage && !isListingThumb(event.heroImage)) {
     return event.heroImage;
   }
@@ -219,6 +214,8 @@ export async function fetchEventimHtml(url: string): Promise<string | null> {
       headers: {
         accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "accept-language": "de-DE,de;q=0.9,en;q=0.8",
+        "user-agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
       },
     });
     if (!response.ok) return null;

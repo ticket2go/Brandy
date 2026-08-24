@@ -31,6 +31,7 @@ export function pageHeroImage(html: string, pageUrl: string): string | null {
   const origin = originOf(pageUrl);
   return (
     artworkContentImage(html, pageUrl) ??
+    largeMediaFromHtml(html, origin) ??
     absolute(
       metaContent(html, "og:image") ??
         metaContent(html, "og:image:url") ??
@@ -360,6 +361,29 @@ function addSrcset(
     const width = Number.parseInt(size ?? "", 10);
     add(url ?? null, Number.isFinite(width) ? width : 0);
   }
+}
+
+function largeMediaFromHtml(html: string, origin: string): string | null {
+  const pattern =
+    /(?:https?:)?\/\/[^"' )\\]+?\/obj\/(?:media|mam)\/[^"' )\\]+?\.(?:jpe?g|png|webp)/gi;
+  const candidates: Array<{ url: string; score: number }> = [];
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html)) !== null) {
+    const url = absolute(match[0], origin);
+    if (!url || seen.has(url) || isSmallThumb(url)) continue;
+    seen.add(url);
+    candidates.push({ url, score: imageScore(url, 0) });
+  }
+  candidates.sort((left, right) => right.score - left.score);
+  return candidates[0]?.url ?? null;
+}
+
+function isSmallThumb(url: string): boolean {
+  if (/_222x222\.(?:jpe?g|png|webp)$/i.test(url)) return true;
+  const dim = url.match(/\/(?:teaser|galery)\/(\d{2,4})x(\d{2,4})\//i);
+  if (!dim) return false;
+  return Number(dim[1]) <= 400 && Number(dim[2]) <= 400;
 }
 
 function imageScore(url: string, width: number): number {

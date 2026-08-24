@@ -118,7 +118,7 @@ export async function scrapeEventim(
         unique.map(withDisplayFields)
       );
     },
-    { fetchPages: false, quick: true }
+    { fetchPages: true, quick: true }
   );
   return {
     events: unique.map(withDisplayFields),
@@ -265,6 +265,7 @@ async function expandFollowUpPages(
   emit(groups.some((group) => group.status !== "done"));
 
   if (grouped.size === 0) {
+    await fillMissingPageHeroes(current);
     emit(false);
     return { events: current, warning: null };
   }
@@ -339,11 +340,20 @@ async function expandFollowUpPages(
   if (stopped) {
     groups = pauseFollowUpGroups(groups);
   }
+  if (!stopped) {
+    await fillMissingPageHeroes(current);
+  }
   emit(false);
   return {
     events: current,
     warning: stopped ? "Unterseiten-Scraping wurde angehalten." : null,
   };
+}
+
+async function fillMissingPageHeroes(events: ScrapedEvent[]): Promise<void> {
+  const missing = events.filter((event) => !event.heroImage && event.ticketUrl);
+  if (missing.length === 0) return;
+  await applyHeroImages(missing, undefined, { fetchPages: true, quick: true });
 }
 
 async function scrapeOneFollowUpGroup(
