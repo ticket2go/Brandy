@@ -5,9 +5,14 @@ import { useEffect, useRef, useState } from "react";
 
 import FollowUpStatus from "@/components/FollowUpStatus";
 import ScraperPreview from "@/components/ScraperPreview";
+import SearchStatus from "@/components/SearchStatus";
 import Title from "@/components/Title";
 import UpdateStatus from "@/components/UpdateStatus";
 import { canResumeFollowUp, followUpProgressOf } from "@/lib/follow-up";
+import {
+  makeSearchProgress,
+  type SearchProgress,
+} from "@/lib/search-progress";
 import {
   loadScraperPreview,
   runScraper,
@@ -26,6 +31,9 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
   const [loading, setLoading] = useState(false);
   const [following, setFollowing] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [searchProgress, setSearchProgress] = useState<SearchProgress | null>(
+    null
+  );
   const autoLoad = useRef(false);
   const stopFollowUps = useRef<AbortController | null>(null);
 
@@ -59,8 +67,9 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     if (!scraper) return;
     setLoading(true);
     try {
-      persist(await loadScraperPreview(scraper));
+      persist(await loadScraperPreview(scraper, setSearchProgress));
     } finally {
+      setSearchProgress(null);
       setLoading(false);
     }
   };
@@ -69,8 +78,9 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     if (!scraper) return;
     setLoading(true);
     try {
-      persist(await runScraper(scraper));
+      persist(await runScraper(scraper, setSearchProgress));
     } finally {
+      setSearchProgress(null);
       setLoading(false);
     }
   };
@@ -104,11 +114,13 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
         await updateScraperEntries(
           scraper,
           (_progress, next) => persist(next),
-          controller.signal
+          controller.signal,
+          setSearchProgress
         )
       );
     } finally {
       if (stopFollowUps.current === controller) stopFollowUps.current = null;
+      setSearchProgress(null);
       setUpdating(false);
     }
   };
@@ -177,10 +189,15 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             <p className="mt-2 truncate text-sm text-black/50" title={scraper.url}>
               {scraper.url}
             </p>
-            <p className="mt-1 text-sm text-black/60">
-              {loading
-                ? "Suchseite inkl. Pagination wird geladen …"
-                : updating
+            {loading || (updating && searchProgress && !following) ? (
+              <div className="mt-3 max-w-md">
+                <SearchStatus
+                  progress={searchProgress ?? makeSearchProgress("search", 0, null)}
+                />
+              </div>
+            ) : (
+              <p className="mt-1 text-sm text-black/60">
+                {updating
                   ? "Einträge werden aktualisiert …"
                   : following && followUp
                     ? `${followUp.done} / ${followUp.total} Unterseiten geladen.`
@@ -189,7 +206,8 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
                       : scraper.preview.length === 0
                         ? "Mit Scrapen die Suchseite inkl. aller Seiten laden."
                         : "Danach Unterseiten Scrapen oder Update für einen Abgleich."}
-            </p>
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -198,7 +216,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
               disabled={busy}
               className="rounded-full bg-black px-6 py-3 text-sm font-semibold text-white transition enabled:hover:bg-black/85 disabled:opacity-50"
             >
-              {loading ? "Läuft …" : "Scrapen"}
+              {loading ? `${searchProgress?.percent ?? 0} %` : "Scrapen"}
             </button>
             {following || updating ? (
               <button

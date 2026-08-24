@@ -4,6 +4,7 @@ import {
   scrapeEventimFollowUpGroup,
   scrapeEventimFollowUps,
 } from "@/lib/eventim-scraper";
+import { makeSearchProgress, type SearchProgress } from "@/lib/search-progress";
 import {
   canResumeFollowUp,
   eventsForGroup,
@@ -27,6 +28,7 @@ import {
 
 export type { FollowUpProgress } from "@/lib/follow-up";
 export type { ScraperUpdate } from "@/lib/event-diff";
+export type { SearchProgress } from "@/lib/search-progress";
 
 type RunPayload = {
   events: ScrapedEvent[];
@@ -36,8 +38,11 @@ type RunPayload = {
 
 const FOLLOW_UP_CONCURRENCY = 3;
 
-export async function loadScraperPreview(scraper: Scraper): Promise<Scraper | null> {
-  const result = await scrapeWithFallback(scraper.url);
+export async function loadScraperPreview(
+  scraper: Scraper,
+  onSearchProgress?: (progress: SearchProgress) => void
+): Promise<Scraper | null> {
+  const result = await scrapeWithFallback(scraper.url, onSearchProgress);
   const firstLoad = scraper.preview.length === 0;
   return updateScraper(scraper.id, {
     preview: result.events,
@@ -49,8 +54,11 @@ export async function loadScraperPreview(scraper: Scraper): Promise<Scraper | nu
   });
 }
 
-export async function runScraper(scraper: Scraper): Promise<Scraper | null> {
-  const result = await scrapeWithFallback(scraper.url);
+export async function runScraper(
+  scraper: Scraper,
+  onSearchProgress?: (progress: SearchProgress) => void
+): Promise<Scraper | null> {
+  const result = await scrapeWithFallback(scraper.url, onSearchProgress);
   const selection = selectionForRerun(scraper.selection);
   const events = applySelection(result.events, selection);
   return updateScraper(scraper.id, {
@@ -68,11 +76,12 @@ export async function runScraper(scraper: Scraper): Promise<Scraper | null> {
 export async function updateScraperEntries(
   scraper: Scraper,
   onProgress?: (progress: FollowUpProgress, next: Scraper) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onSearchProgress?: (progress: SearchProgress) => void
 ): Promise<Scraper | null> {
   const previous =
     scraper.preview.length > 0 ? scraper.preview : scraper.events;
-  const search = await scrapeWithFallback(scraper.url);
+  const search = await scrapeWithFallback(scraper.url, onSearchProgress);
   if (search.events.length === 0) {
     return updateScraper(scraper.id, {
       lastRunAt: new Date().toISOString(),
@@ -351,13 +360,18 @@ export function applyScraperSelection(
   });
 }
 
-async function scrapeWithFallback(url: string): Promise<RunPayload> {
+async function scrapeWithFallback(
+  url: string,
+  onSearchProgress?: (progress: SearchProgress) => void
+): Promise<RunPayload> {
+  onSearchProgress?.(makeSearchProgress("search", 0, null));
   if (typeof window !== "undefined" && isEventimUrl(url)) {
     try {
-      const result = await scrapeEventim(url);
+      const result = await scrapeEventim(url, { onProgress: onSearchProgress });
       if (result.events.length > 0) {
         return { ...result, error: null };
       }
+      onSearchProgress?.(makeSearchProgress("search", 0, null));
       const server = await scrapeViaApi(url);
       if (server.events.length > 0) return server;
       return {
@@ -366,6 +380,7 @@ async function scrapeWithFallback(url: string): Promise<RunPayload> {
         error: server.error,
       };
     } catch (error) {
+      onSearchProgress?.(makeSearchProgress("search", 0, null));
       const server = await scrapeViaApi(url);
       if (server.events.length > 0) return server;
       if (server.error || server.warning) return server;

@@ -18,12 +18,17 @@ import {
 import {
   combineLocation,
   dedupeEvents,
+  eventKey,
   formatDate,
   formatPrice,
   formatTime,
   sortEvents,
   type ScrapedEvent,
 } from "@/lib/scraped-event";
+import {
+  makeSearchProgress,
+  type SearchProgress,
+} from "@/lib/search-progress";
 
 export type { FollowUpGroup, FollowUpProgress } from "@/lib/follow-up";
 
@@ -59,14 +64,23 @@ export function isEventimUrl(rawUrl: string): boolean {
   }
 }
 
-export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
+export type SearchScrapeOptions = {
+  onProgress?: (progress: SearchProgress) => void;
+};
+
+export async function scrapeEventim(
+  rawUrl: string,
+  options?: SearchScrapeOptions
+): Promise<ScrapeResult> {
   const pageUrl = new URL(rawUrl);
   let events: ScrapedEvent[] = [];
   let totalResults: number | null = null;
   let searchError: Error | null = null;
+  const emit = (progress: SearchProgress) => options?.onProgress?.(progress);
+  emit(makeSearchProgress("search", 0, null));
 
   try {
-    const page = await fetchPageEvents(pageUrl);
+    const page = await fetchPageEvents(pageUrl, emit);
     events = page.events;
     totalResults = page.totalResults;
   } catch (error) {
@@ -86,7 +100,10 @@ export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
   }
 
   const unique = sortEvents(dedupeEvents(events));
-  await applyHeroImages(unique);
+  emit(makeSearchProgress("heroes", unique.length, totalResults ?? unique.length, 0, unique.length));
+  await applyHeroImages(unique, (done, total) => {
+    emit(makeSearchProgress("heroes", unique.length, totalResults ?? unique.length, done, total));
+  });
   return {
     events: unique.map(withDisplayFields),
     warning:
@@ -136,7 +153,8 @@ export async function scrapeEventimFollowUpGroup(
 }
 
 async function fetchPageEvents(
-  pageUrl: URL
+  pageUrl: URL,
+  emit?: (progress: SearchProgress) => void
 ): Promise<{ events: ScrapedEvent[]; totalResults: number | null }> {
   const groupId = productGroupIdFromLink(pageUrl.toString());
   if (groupId) {
@@ -147,10 +165,14 @@ async function fetchPageEvents(
     ];
     for (const key of keys) {
       try {
-        const grouped = await fetchAllProductPages(pageUrl, (params) => {
-          params.set("sort", "DateAsc");
-          params.set(key, groupId);
-        });
+        const grouped = await fetchAllProductPages(
+          pageUrl,
+          (params) => {
+            params.set("sort", "DateAsc");
+            params.set(key, groupId);
+          },
+          emit
+        );
         if (grouped.events.length > 0) return grouped;
       } catch {
         continue;
@@ -160,10 +182,14 @@ async function fetchPageEvents(
 
   const searchTerm = searchTermOf(pageUrl);
   if (searchTerm || cityOf(pageUrl) || isSearchPath(pageUrl)) {
-    return fetchAllProductPages(pageUrl, (params) => {
-      params.set("sort", "Recommendation");
-      if (searchTerm) params.set("search_term", searchTerm);
-    });
+    return fetchAllProductPages(
+      pageUrl,
+      (params) => {
+        params.set("sort", "Recommendation");
+        if (searchTerm) params.set("search_term", searchTerm);
+      },
+      emit
+    );
   }
 
   return { events: [], totalResults: null };
@@ -378,9 +404,12 @@ function productGroupIdFromLink(link: string): string | null {
 
 async function fetchAllProductPages(
   pageUrl: URL,
-  apply: (params: URLSearchParams) => void
+  apply: (params: URLSearchParams) => void,
+  emit?: (progress: SearchProgress) => void
 ): Promise<{ events: ScrapedEvent[]; totalResults: number | null }> {
   const first = await fetchProductList(pageUrl, apply);
+  const seen = new Set(first.events.map((event) => eventKey(event)));
+  emit?.(makeSearchProgress("search", seen.size, first.totalResults));
   if (
     first.totalResults == null ||
     first.totalResults <= first.events.length
@@ -391,7 +420,14 @@ async function fetchAllProductPages(
   const from = addDays(berlinDate(), -7);
   const to = addDays(from, DATE_RANGE_YEARS * 365);
   const limit = createLimiter(RANGE_CONCURRENCY);
-  const paged = await walkDateRange(pageUrl, apply, from, to, limit);
+  const paged = await walkDateRange(pageUrl, apply, from, to, limit, (batch) => {
+    for (const event of batch) {
+      const key = eventKey(event);
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    emit?.(makeSearchProgress("search", seen.size, first.totalResults));
+  });
   return {
     events: dedupeEvents([...first.events, ...paged]),
     totalResults: first.totalResults,
@@ -425,7 +461,8 @@ async function walkDateRange(
   apply: (params: URLSearchParams) => void,
   from: string,
   to: string,
-  limit: <T>(fn: () => Promise<T>) => Promise<T>
+  limit: <T>(fn: () => Promise<T>) => Promise<T>,
+  onBatch?: (events: ScrapedEvent[]) => void
 ): Promise<ScrapedEvent[]> {
   const page = await limit(() => fetchProductList(pageUrl, apply, { from, to }));
   if (page.events.length === 0) return [];
@@ -434,16 +471,20 @@ async function walkDateRange(
     page.totalResults <= page.events.length ||
     from >= to
   ) {
+    onBatch?.(page.events);
     return page.events;
   }
 
   const mid = midDate(from, to);
   const next = addDays(mid === from ? from : mid, 1);
-  if (next > to) return page.events;
+  if (next > to) {
+    onBatch?.(page.events);
+    return page.events;
+  }
 
   const [left, right] = await Promise.all([
-    walkDateRange(pageUrl, apply, from, mid === from ? from : mid, limit),
-    walkDateRange(pageUrl, apply, next, to, limit),
+    walkDateRange(pageUrl, apply, from, mid === from ? from : mid, limit, onBatch),
+    walkDateRange(pageUrl, apply, next, to, limit, onBatch),
   ]);
   return [...left, ...right];
 }

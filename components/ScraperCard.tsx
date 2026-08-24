@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import SearchStatus from "@/components/SearchStatus";
+import { makeSearchProgress, type SearchProgress } from "@/lib/search-progress";
 import type { Scraper } from "@/lib/scrapers";
 
 type ScraperCardProps = {
@@ -14,6 +16,7 @@ type ScraperCardProps = {
   onStopFollowUps?: () => void;
   onDelete: () => void;
   updating?: boolean;
+  searchProgress?: SearchProgress | null;
 };
 
 export default function ScraperCard({
@@ -26,6 +29,7 @@ export default function ScraperCard({
   onStopFollowUps,
   onDelete,
   updating = false,
+  searchProgress = null,
 }: ScraperCardProps) {
   const busy = running || following || updating;
   const hasEntries = scraper.preview.length > 0 || scraper.events.length > 0;
@@ -56,18 +60,25 @@ export default function ScraperCard({
           <p className="mt-1 truncate text-[12px] text-white/50" title={scraper.url}>
             {scraper.url}
           </p>
-          <p className="mt-1 text-[12px] text-white/50">
-            {running
-              ? "Suchseite …"
-              : following || followUp?.running
+          {running || (updating && searchProgress && !following) ? (
+            <div className="mt-2">
+              <SearchStatus
+                tone="dark"
+                progress={searchProgress ?? makeSearchProgress("search", 0, null)}
+              />
+            </div>
+          ) : (
+            <p className="mt-1 text-[12px] text-white/50">
+              {following || followUp?.running
                 ? `${followDone}/${followTotal} Unterseiten · ${scraper.entryCount} Events`
                 : scraper.entryCount === 1
                   ? "1 Event"
                   : `${scraper.entryCount} Events`}
-            {scraper.lastRunAt && !busy
-              ? ` · ${new Date(scraper.lastRunAt).toLocaleString("de-DE")}`
-              : ""}
-          </p>
+              {scraper.lastRunAt && !busy
+                ? ` · ${new Date(scraper.lastRunAt).toLocaleString("de-DE")}`
+                : ""}
+            </p>
+          )}
           {scraper.lastUpdate && !busy ? (
             <p className="mt-1 text-[11px] text-white/45">
               {scraper.lastUpdate.updated} aktualisiert · {scraper.lastUpdate.added} neu ·{" "}
@@ -85,7 +96,9 @@ export default function ScraperCard({
             disabled={busy}
             className="rounded-full bg-white px-4 py-2 text-[12px] font-semibold text-black transition enabled:hover:bg-white/90 disabled:opacity-50"
           >
-            {running ? "Läuft …" : "Scrapen"}
+            {running
+              ? `${searchProgress?.percent ?? 0} %`
+              : "Scrapen"}
           </button>
           <button
             type="button"

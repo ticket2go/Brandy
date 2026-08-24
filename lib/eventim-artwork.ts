@@ -103,7 +103,8 @@ export async function applyHeroImages(
     name?: string | null;
     startsAt?: string | null;
     ticketUrl?: string | null;
-  }>
+  }>,
+  onProgress?: (done: number, total: number) => void
 ): Promise<void> {
   const jobs = new Map<string, HeroExtra & { listing: string | null }>();
   for (const event of events) {
@@ -120,10 +121,14 @@ export async function applyHeroImages(
   const resolved = new Map<string, string | null>();
   const listings = [...jobs.entries()];
   const concurrency = 6;
+  let done = 0;
+  onProgress?.(0, listings.length);
   for (let index = 0; index < listings.length; index += concurrency) {
     await Promise.all(
       listings.slice(index, index + concurrency).map(async ([key, job]) => {
         resolved.set(key, await resolveHeroImage(job.listing, job));
+        done += 1;
+        onProgress?.(done, listings.length);
       })
     );
   }

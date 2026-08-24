@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import ConfirmDialog from "./ConfirmDialog";
 import ScraperCard from "./ScraperCard";
 import { runScraper, scrapeScraperFollowUps, updateScraperEntries } from "@/lib/run-scraper";
+import type { SearchProgress } from "@/lib/search-progress";
 import {
   loadScrapers,
   newScraper,
@@ -20,6 +21,9 @@ export default function ScraperManager() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [followUpId, setFollowUpId] = useState<string | null>(null);
   const [updateId, setUpdateId] = useState<string | null>(null);
+  const [searchProgress, setSearchProgress] = useState<
+    Record<string, SearchProgress>
+  >({});
   const followUpAbort = useRef<AbortController | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -158,13 +162,20 @@ export default function ScraperManager() {
   const handleRun = async (scraper: Scraper) => {
     setRunningId(scraper.id);
     try {
-      const next = await runScraper(scraper);
+      const next = await runScraper(scraper, (progress) => {
+        setSearchProgress((prev) => ({ ...prev, [scraper.id]: progress }));
+      });
       if (next) {
         setScrapers((prev) =>
           prev.map((item) => (item.id === next.id ? next : item))
         );
       }
     } finally {
+      setSearchProgress((prev) => {
+        const next = { ...prev };
+        delete next[scraper.id];
+        return next;
+      });
       setRunningId(null);
     }
   };
@@ -210,7 +221,10 @@ export default function ScraperManager() {
             prev.map((item) => (item.id === updated.id ? updated : item))
           );
         },
-        controller.signal
+        controller.signal,
+        (progress) => {
+          setSearchProgress((prev) => ({ ...prev, [scraper.id]: progress }));
+        }
       );
       if (next) {
         setScrapers((prev) =>
@@ -219,6 +233,11 @@ export default function ScraperManager() {
       }
     } finally {
       if (followUpAbort.current === controller) followUpAbort.current = null;
+      setSearchProgress((prev) => {
+        const next = { ...prev };
+        delete next[scraper.id];
+        return next;
+      });
       setUpdateId(null);
     }
   };
@@ -264,6 +283,7 @@ export default function ScraperManager() {
                 running={runningId === scraper.id}
                 following={followUpId === scraper.id}
                 updating={updateId === scraper.id}
+                searchProgress={searchProgress[scraper.id] ?? null}
                 onRun={() => handleRun(scraper)}
                 onFollowUps={() => handleFollowUps(scraper)}
                 onUpdate={() => handleUpdate(scraper)}
