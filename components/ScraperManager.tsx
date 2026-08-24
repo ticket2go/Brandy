@@ -10,6 +10,7 @@ import {
   newScraper,
   normalizeUrl,
   saveScrapers,
+  updateScraper,
   type Scraper,
 } from "@/lib/scrapers";
 
@@ -30,7 +31,15 @@ export default function ScraperManager() {
 
   useEffect(() => {
     const sync = () => {
-      setScrapers(loadScrapers());
+      const loaded = loadScrapers().map((item) => {
+        if (!item.followUp?.running) return item;
+        return (
+          updateScraper(item.id, {
+            followUp: { ...item.followUp, running: false },
+          }) ?? item
+        );
+      });
+      setScrapers(loaded);
       setReady(true);
     };
     sync();
@@ -161,7 +170,11 @@ export default function ScraperManager() {
   const handleFollowUps = async (scraper: Scraper) => {
     setFollowUpId(scraper.id);
     try {
-      const next = await scrapeScraperFollowUps(scraper);
+      const next = await scrapeScraperFollowUps(scraper, (_progress, updated) => {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === updated.id ? updated : item))
+        );
+      });
       if (next) {
         setScrapers((prev) =>
           prev.map((item) => (item.id === next.id ? next : item))

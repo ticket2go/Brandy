@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import FollowUpStatus from "@/components/FollowUpStatus";
 import ScraperPreview from "@/components/ScraperPreview";
 import Title from "@/components/Title";
+import { followUpProgressOf } from "@/lib/follow-up";
 import {
   applyScraperSelection,
   loadScraperPreview,
@@ -12,7 +14,7 @@ import {
   scrapeScraperFollowUps,
 } from "@/lib/run-scraper";
 import { FIELD_LABELS, type ScrapedEvent, type ScraperField } from "@/lib/scraped-event";
-import { getScraper, type Scraper, type ScraperSelection } from "@/lib/scrapers";
+import { getScraper, updateScraper, type Scraper, type ScraperSelection } from "@/lib/scrapers";
 
 type ScraperDetailProps = {
   id: string;
@@ -28,8 +30,16 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
 
   useEffect(() => {
     const current = getScraper(id);
-    setScraper(current);
-    setSelection(current?.selection ?? null);
+    if (current?.followUp?.running) {
+      const next = updateScraper(id, {
+        followUp: { ...current.followUp, running: false },
+      });
+      setScraper(next);
+      setSelection(next?.selection ?? null);
+    } else {
+      setScraper(current);
+      setSelection(current?.selection ?? null);
+    }
     setReady(true);
   }, [id]);
 
@@ -79,7 +89,9 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     if (!scraper) return;
     setFollowing(true);
     try {
-      persist(await scrapeScraperFollowUps(scraper));
+      persist(
+        await scrapeScraperFollowUps(scraper, (_progress, next) => persist(next))
+      );
     } finally {
       setFollowing(false);
     }
@@ -119,6 +131,13 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
   const selectedCount = selection.selectAll
     ? scraper.preview.length
     : selection.itemIds.length;
+  const followUp = scraper.followUp
+    ? followUpProgressOf(
+        scraper.followUp.groups,
+        scraper.preview,
+        following || scraper.followUp.running
+      )
+    : null;
 
   return (
     <main className="relative flex min-h-screen w-full flex-col items-stretch justify-start gap-12 py-16">
@@ -143,8 +162,8 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             <p className="mt-1 text-sm text-black/60">
               {loading
                 ? "Suchseite inkl. Pagination wird geladen …"
-                : following
-                  ? "Artist-Unterseiten werden gescraped …"
+                : following && followUp
+                  ? `${followUp.done} / ${followUp.total} Unterseiten geladen.`
                   : scraper.preview.length === 0
                     ? "Mit Scrapen die Suchseite inkl. aller Seiten laden."
                     : "Danach Unterseiten Scrapen, um die Artist-Seiten zu holen."}
@@ -165,7 +184,11 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
               disabled={loading || following || scraper.preview.length === 0}
               className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
             >
-              {following ? "Läuft …" : "Unterseiten Scrapen"}
+              {following && followUp
+                ? `${followUp.done}/${followUp.total}`
+                : following
+                  ? "Läuft …"
+                  : "Unterseiten Scrapen"}
             </button>
             <button
               type="button"
@@ -192,6 +215,8 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
           </p>
         ) : null}
 
+        {followUp ? <FollowUpStatus progress={followUp} /> : null}
+
         {scraper.preview.length === 0 ? (
           <p className="text-sm text-black/50">
             {loading
@@ -205,6 +230,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             preview={scraper.preview}
             selection={selection}
             onChange={setSelection}
+            groups={followUp?.groups}
           />
         )}
 

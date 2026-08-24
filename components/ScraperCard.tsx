@@ -23,6 +23,13 @@ export default function ScraperCard({
 }: ScraperCardProps) {
   const busy = running || following;
   const hasEntries = scraper.preview.length > 0 || scraper.events.length > 0;
+  const followUp = scraper.followUp;
+  const followDone = followUp
+    ? followUp.groups.filter(
+        (group) => group.status === "done" || group.status === "error"
+      ).length
+    : 0;
+  const followTotal = followUp?.groups.length ?? 0;
 
   return (
     <article className="flex w-full max-w-xl flex-col gap-4 rounded-2xl bg-black p-5 text-white">
@@ -40,8 +47,8 @@ export default function ScraperCard({
           <p className="mt-1 text-[12px] text-white/50">
             {running
               ? "Suchseite …"
-              : following
-                ? "Unterseiten …"
+              : following || followUp?.running
+                ? `${followDone}/${followTotal} Unterseiten · ${scraper.entryCount} Events`
                 : scraper.entryCount === 1
                   ? "1 Event"
                   : `${scraper.entryCount} Events`}
@@ -68,7 +75,9 @@ export default function ScraperCard({
             disabled={busy || !hasEntries}
             className="rounded-full bg-white/15 px-4 py-2 text-[12px] font-semibold text-white transition enabled:hover:bg-white/25 disabled:opacity-40"
           >
-            {following ? "Läuft …" : "Unterseiten Scrapen"}
+            {following || followUp?.running
+              ? `${followDone}/${followTotal}`
+              : "Unterseiten Scrapen"}
           </button>
           <button
             type="button"

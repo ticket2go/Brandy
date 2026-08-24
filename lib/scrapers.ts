@@ -1,4 +1,8 @@
 import {
+  isFollowUpGroup,
+  type FollowUpGroup,
+} from "@/lib/follow-up";
+import {
   eventKey,
   SCRAPER_FIELDS,
   type ScrapedEvent,
@@ -13,6 +17,11 @@ export type ScraperSelection = {
   fields: ScraperField[];
 };
 
+export type ScraperFollowUp = {
+  running: boolean;
+  groups: FollowUpGroup[];
+};
+
 export type Scraper = {
   id: string;
   name: string;
@@ -25,6 +34,7 @@ export type Scraper = {
   lastRunAt: string | null;
   error: string | null;
   warning: string | null;
+  followUp: ScraperFollowUp | null;
 };
 
 const STORAGE_KEY = "eventscraper.scrapers";
@@ -51,6 +61,7 @@ export function newScraper(name: string, url: string): Scraper {
     lastRunAt: null,
     error: null,
     warning: null,
+    followUp: null,
   };
 }
 
@@ -135,6 +146,7 @@ function pickFields(event: ScrapedEvent, fields: ScraperField[]): ScrapedEvent {
     heroImage: keep.has("heroImage") ? event.heroImage : null,
     ticketUrl: keep.has("ticketUrl") ? event.ticketUrl : null,
     price: keep.has("price") ? event.price : null,
+    productGroupId: event.productGroupId,
   };
 }
 
@@ -159,6 +171,20 @@ function withDefaults(row: Scraper): Scraper {
     lastRunAt: row.lastRunAt ?? null,
     error: typeof row.error === "string" ? row.error : null,
     warning: typeof row.warning === "string" ? row.warning : null,
+    followUp: normalizeFollowUp(row.followUp),
+  };
+}
+
+function normalizeFollowUp(value: unknown): ScraperFollowUp | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Partial<ScraperFollowUp>;
+  const groups = Array.isArray(row.groups)
+    ? row.groups.filter(isFollowUpGroup)
+    : [];
+  if (groups.length === 0) return null;
+  return {
+    running: row.running === true,
+    groups,
   };
 }
 

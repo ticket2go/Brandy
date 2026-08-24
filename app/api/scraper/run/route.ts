@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   isEventimUrl,
   scrapeEventim,
+  scrapeEventimFollowUpGroup,
   scrapeEventimFollowUps,
 } from "@/lib/eventim-scraper";
 import type { ScrapedEvent } from "@/lib/scraped-event";
@@ -51,11 +52,21 @@ export async function POST(request: Request) {
     Array.isArray((body as { events?: unknown }).events)
       ? ((body as { events: ScrapedEvent[] }).events)
       : [];
+  const groupId =
+    typeof body === "object" &&
+    body !== null &&
+    "groupId" in body &&
+    typeof (body as { groupId?: unknown }).groupId === "string"
+      ? (body as { groupId: string }).groupId.trim()
+      : "";
 
   try {
-    const result = followUps
-      ? await scrapeEventimFollowUps(sourceEvents, rawUrl)
-      : await scrapeEventim(rawUrl);
+    const result =
+      followUps && groupId
+        ? await scrapeEventimFollowUpGroup(sourceEvents, rawUrl, groupId)
+        : followUps
+          ? await scrapeEventimFollowUps(sourceEvents, rawUrl)
+          : await scrapeEventim(rawUrl);
     return NextResponse.json({ ...result, error: null });
   } catch (error) {
     return NextResponse.json(

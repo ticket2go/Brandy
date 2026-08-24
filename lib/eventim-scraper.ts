@@ -1,5 +1,14 @@
 import { absolute, parseEventimPage } from "@/lib/eventim-parse";
 import {
+  eventsForGroup,
+  followUpGroupId,
+  followUpProgressOf,
+  listFollowUpGroups,
+  replaceGroupEvents,
+  type FollowUpGroup,
+  type FollowUpProgress,
+} from "@/lib/follow-up";
+import {
   combineLocation,
   dedupeEvents,
   formatDate,
@@ -8,6 +17,8 @@ import {
   sortEvents,
   type ScrapedEvent,
 } from "@/lib/scraped-event";
+
+export type { FollowUpGroup, FollowUpProgress } from "@/lib/follow-up";
 
 export type ScrapeResult = {
   events: ScrapedEvent[];
@@ -30,6 +41,7 @@ const WEB_IDS: Record<string, string> = {
 const REQUEST_TIMEOUT_MS = 9000;
 const PAGE_SIZE = 50;
 const RANGE_CONCURRENCY = 4;
+const FOLLOW_UP_CONCURRENCY = 3;
 const DATE_RANGE_YEARS = 4;
 
 export function isEventimUrl(rawUrl: string): boolean {
@@ -78,7 +90,8 @@ export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
 
 export async function scrapeEventimFollowUps(
   events: ScrapedEvent[],
-  rawUrl: string
+  rawUrl: string,
+  onProgress?: (progress: FollowUpProgress, events: ScrapedEvent[]) => void
 ): Promise<ScrapeResult> {
   if (events.length === 0) {
     return {
@@ -87,9 +100,27 @@ export async function scrapeEventimFollowUps(
     };
   }
   const pageUrl = new URL(rawUrl);
-  const expanded = await expandFollowUpPages(events, pageUrl);
+  const expanded = await expandFollowUpPages(events, pageUrl, onProgress);
   return {
-    events: sortEvents(dedupeEvents(expanded)).map(withDisplayFields),
+    events: expanded,
+    warning: null,
+  };
+}
+
+export async function scrapeEventimFollowUpGroup(
+  events: ScrapedEvent[],
+  rawUrl: string,
+  groupId: string
+): Promise<ScrapeResult> {
+  const pageUrl = new URL(rawUrl);
+  const originals = eventsForGroup(events, groupId);
+  const next = await scrapeOneFollowUpGroup(
+    originals.length > 0 ? originals : events,
+    groupId,
+    pageUrl
+  );
+  return {
+    events: sortEvents(dedupeEvents(next)).map(withDisplayFields),
     warning: null,
   };
 }
@@ -130,15 +161,14 @@ async function fetchPageEvents(
 
 async function expandFollowUpPages(
   events: ScrapedEvent[],
-  pageUrl: URL
+  pageUrl: URL,
+  onProgress?: (progress: FollowUpProgress, events: ScrapedEvent[]) => void
 ): Promise<ScrapedEvent[]> {
   const grouped = new Map<string, ScrapedEvent[]>();
   const rest: ScrapedEvent[] = [];
 
   for (const event of events) {
-    const listedId =
-      (event as ListedEvent).productGroupId ??
-      productGroupIdFromLink(event.ticketUrl ?? "");
+    const listedId = followUpGroupId(event);
     if (!listedId) {
       rest.push(withHeaderImage(event));
       continue;
@@ -148,38 +178,102 @@ async function expandFollowUpPages(
     grouped.set(listedId, bucket);
   }
 
-  const limit = createLimiter(RANGE_CONCURRENCY);
-  const chunks = await Promise.all(
+  let current = sortEvents(
+    dedupeEvents([...rest, ...[...grouped.values()].flat()])
+  ).map(withDisplayFields);
+  let groups: FollowUpGroup[] = listFollowUpGroups(events);
+
+  const emit = (running: boolean) => {
+    onProgress?.(followUpProgressOf(groups, current, running), current);
+  };
+
+  emit(groups.length > 0);
+
+  if (grouped.size === 0) {
+    emit(false);
+    return current;
+  }
+
+  const limit = createLimiter(FOLLOW_UP_CONCURRENCY);
+  await Promise.all(
     [...grouped.entries()].map(([groupId, originals]) =>
       limit(async () => {
+        groups = groups.map((group) =>
+          group.id === groupId ? { ...group, status: "running" } : group
+        );
+        emit(true);
         try {
-          const follow = await fetchAllProductPages(pageUrl, (params) => {
-            params.set("sort", "DateAsc");
-            params.set("product_group_id", groupId);
-          });
-          if (follow.events.length > 1) {
-            const header =
-              headerImageFrom(originals[0]?.heroImage) ?? originals[0]?.heroImage;
-            return follow.events.map((event) =>
-              withHeaderImage(
-                {
-                  ...event,
-                  name: event.name || originals[0]?.name || event.name,
-                  heroImage: header ?? event.heroImage,
-                },
-                header
-              )
-            );
-          }
-        } catch {
-          // Eintrag ohne Folgeseite behalten.
+          const next = await scrapeOneFollowUpGroup(
+            originals,
+            groupId,
+            pageUrl
+          );
+          current = replaceGroupEvents(current, groupId, next);
+          groups = groups.map((group) =>
+            group.id === groupId
+              ? {
+                  ...group,
+                  status: "done",
+                  eventCount: next.length,
+                  error: null,
+                }
+              : group
+          );
+        } catch (error) {
+          const fallback = originals.map((event) => withHeaderImage(event));
+          current = replaceGroupEvents(current, groupId, fallback);
+          groups = groups.map((group) =>
+            group.id === groupId
+              ? {
+                  ...group,
+                  status: "error",
+                  eventCount: fallback.length,
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : "Unterseite konnte nicht geladen werden.",
+                }
+              : group
+          );
         }
-        return originals.map((event) => withHeaderImage(event));
+        emit(true);
       })
     )
   );
 
-  return [...rest, ...chunks.flat()];
+  emit(false);
+  return current;
+}
+
+async function scrapeOneFollowUpGroup(
+  originals: ScrapedEvent[],
+  groupId: string,
+  pageUrl: URL
+): Promise<ScrapedEvent[]> {
+  const follow = await fetchAllProductPages(pageUrl, (params) => {
+    params.set("sort", "DateAsc");
+    params.set("product_group_id", groupId);
+  });
+  if (follow.events.length > 1) {
+    const header =
+      headerImageFrom(originals[0]?.heroImage) ?? originals[0]?.heroImage;
+    return follow.events.map((event) =>
+      withDisplayFields(
+        withHeaderImage(
+          {
+            ...event,
+            name: event.name || originals[0]?.name || event.name,
+            heroImage: header ?? event.heroImage,
+            productGroupId: groupId,
+          },
+          header
+        )
+      )
+    );
+  }
+  return originals.map((event) =>
+    withDisplayFields(withHeaderImage({ ...event, productGroupId: groupId }))
+  );
 }
 
 function withHeaderImage(
