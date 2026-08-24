@@ -14,17 +14,8 @@ export type ScrapeResult = {
   warning: string | null;
 };
 
-type SearchHit = {
-  name: string;
-  productGroupId: string | null;
-  followUpUrl: string | null;
-  image: string | null;
-};
-
 const PRODUCTS_URL =
   "https://public-api.eventim.com/websearch/search/api/exploration/v1/products";
-const PRODUCT_GROUPS_URL =
-  "https://public-api.eventim.com/websearch/search/api/exploration/v2/productGroups";
 
 const WEB_IDS: Record<string, string> = {
   de: "web__eventim-de",
@@ -33,8 +24,8 @@ const WEB_IDS: Record<string, string> = {
 };
 
 const REQUEST_TIMEOUT_MS = 9000;
-const MAX_HITS = 50;
-const FOLLOW_UP_CONCURRENCY = 4;
+const PAGE_SIZE = 50;
+const MAX_PAGES = 20;
 
 export function isEventimUrl(rawUrl: string): boolean {
   try {
@@ -46,20 +37,20 @@ export function isEventimUrl(rawUrl: string): boolean {
 
 export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
   const pageUrl = new URL(rawUrl);
-  let hits: SearchHit[] = [];
+  let events: ScrapedEvent[] = [];
   let searchError: Error | null = null;
 
   try {
-    hits = await fetchSearchHits(pageUrl);
+    events = await fetchPageEvents(pageUrl);
   } catch (error) {
     searchError = error instanceof Error ? error : new Error(String(error));
   }
 
-  if (hits.length === 0) {
-    hits = await fetchSearchHitsFromHtml(pageUrl);
+  if (events.length === 0) {
+    events = await fetchEventsFromHtml(pageUrl);
   }
 
-  if (hits.length === 0) {
+  if (events.length === 0) {
     if (searchError) throw searchError;
     return {
       events: [],
@@ -67,56 +58,57 @@ export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
     };
   }
 
-  const chunks = await mapPool(
-    hits.slice(0, MAX_HITS),
-    FOLLOW_UP_CONCURRENCY,
-    (hit) => fetchFollowUpEvents(hit, pageUrl)
-  );
-
-  const events = sortEvents(dedupeEvents(chunks.flat())).map(withDisplayFields);
   return {
-    events,
-    warning:
-      events.length === 0
-        ? "Die Folgeseiten haben keine Termine geliefert."
-        : null,
+    events: sortEvents(dedupeEvents(events)).map(withDisplayFields),
+    warning: null,
   };
 }
 
-async function fetchSearchHits(pageUrl: URL): Promise<SearchHit[]> {
+async function fetchPageEvents(pageUrl: URL): Promise<ScrapedEvent[]> {
+  const groupId = productGroupIdFromLink(pageUrl.toString());
+  if (groupId) {
+    const grouped = await fetchProductGroupEvents(groupId, pageUrl);
+    if (grouped.length > 0) return grouped;
+  }
+
   const searchTerm = searchTermOf(pageUrl);
-  const params = baseParams(pageUrl);
-  params.set("sort", "Recommendation");
-  if (searchTerm) params.set("search_term", searchTerm);
+  if (searchTerm || cityOf(pageUrl) || isSearchPath(pageUrl)) {
+    return fetchProductPages(pageUrl, (params) => {
+      params.set("sort", "Recommendation");
+      if (searchTerm) params.set("search_term", searchTerm);
+    });
+  }
 
-  const groups = await fetchJson(PRODUCT_GROUPS_URL, params, pageUrl);
-  const hits = hitsFromPayload(groups, pageUrl.origin);
-  if (hits.length > 0) return hits;
-
-  const products = await fetchJson(PRODUCTS_URL, params, pageUrl);
-  return hitsFromPayload(products, pageUrl.origin);
+  return [];
 }
 
-async function fetchSearchHitsFromHtml(pageUrl: URL): Promise<SearchHit[]> {
+async function fetchEventsFromHtml(pageUrl: URL): Promise<ScrapedEvent[]> {
   const html = await fetchHtml(pageUrl.toString());
   if (!html) return [];
   const parsed = parseEventimPage(html, pageUrl.toString());
-  const hits: SearchHit[] = [];
-  const seen = new Set<string>();
+  if (parsed.events.length > 0) return parsed.events.map(withDisplayFields);
 
+  const events: ScrapedEvent[] = [];
+  const seen = new Set<string>();
   for (const link of parsed.productLinks) {
-    const groupId = productGroupIdFromLink(link);
-    const key = groupId ?? link;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    hits.push({
-      name: parsed.title ?? "Event",
-      productGroupId: groupId,
-      followUpUrl: link,
-      image: parsed.heroImage,
-    });
+    if (seen.has(link)) continue;
+    seen.add(link);
+    events.push(
+      withDisplayFields({
+        name: parsed.title ?? "Event",
+        venue: null,
+        city: null,
+        location: null,
+        date: null,
+        time: null,
+        startsAt: null,
+        heroImage: parsed.heroImage,
+        ticketUrl: link,
+        price: null,
+      })
+    );
   }
-  return hits.slice(0, MAX_HITS);
+  return events;
 }
 
 function productGroupIdFromLink(link: string): string | null {
@@ -134,117 +126,43 @@ function productGroupIdFromLink(link: string): string | null {
   }
 }
 
-function hitsFromPayload(payload: unknown, origin: string): SearchHit[] {
-  const record = asRecord(payload);
-  if (!record) return [];
-  const hits: SearchHit[] = [];
-  const seen = new Set<string>();
-
-  for (const list of [record.productGroups, record.products, record.events]) {
-    if (!Array.isArray(list)) continue;
-    for (const raw of list) {
-      const item = asRecord(raw);
-      if (!item) continue;
-      const name = asString(item.name) ?? asString(item.title);
-      if (!name) continue;
-      const productGroupId =
-        asString(item.productGroupId) ??
-        asString(asRecord(item.productGroup)?.id) ??
-        asString(item.id);
-      const link = absolute(linkOf(item), origin);
-      const key = productGroupId ?? link ?? name;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      hits.push({
-        name,
-        productGroupId,
-        followUpUrl: link,
-        image: absolute(imageOf(item), origin),
-      });
-    }
-  }
-  return hits;
-}
-
-async function fetchFollowUpEvents(
-  hit: SearchHit,
-  pageUrl: URL
-): Promise<ScrapedEvent[]> {
-  if (hit.productGroupId) {
-    const events = await fetchProductGroupEvents(hit.productGroupId, pageUrl);
-    if (events.length > 0) return events.map((event) => withHitData(event, hit));
-  }
-
-  const page = await fetchFollowUpPage(hit, pageUrl);
-  return page.events.map((event) =>
-    withHitData({ ...event, heroImage: event.heroImage ?? page.heroImage }, hit)
-  );
-}
-
-function withHitData(event: ScrapedEvent, hit: SearchHit): ScrapedEvent {
-  return {
-    ...event,
-    name: event.name || hit.name,
-    heroImage: event.heroImage ?? hit.image,
-  };
-}
-
-type FollowUpPage = {
-  events: ScrapedEvent[];
-  heroImage: string | null;
-};
-
-async function fetchFollowUpPage(
-  hit: SearchHit,
-  pageUrl: URL
-): Promise<FollowUpPage> {
-  const visited = new Set<string>();
-  const queue: string[] = [];
-  if (hit.followUpUrl) queue.push(hit.followUpUrl);
-  if (hit.productGroupId) {
-    queue.push(`${pageUrl.origin}/component?esid=${hit.productGroupId}`);
-  }
-
-  let heroImage: string | null = null;
-  const events: ScrapedEvent[] = [];
-
-  while (queue.length > 0 && visited.size < 4) {
-    const next = queue.shift();
-    if (!next || visited.has(next)) continue;
-    visited.add(next);
-
-    const html = await fetchHtml(next);
-    if (!html) continue;
-    const parsed = parseEventimPage(html, next);
-    heroImage = heroImage ?? parsed.heroImage;
-    events.push(...parsed.events);
-
-    if (parsed.followUpUrl && !visited.has(parsed.followUpUrl)) {
-      queue.push(parsed.followUpUrl);
-    }
-  }
-
-  return { events: dedupeEvents(events), heroImage };
-}
-
 async function fetchProductGroupEvents(
   groupId: string,
   pageUrl: URL
 ): Promise<ScrapedEvent[]> {
   const keys = ["product_group_id", "product_group.product_group_id", "productGroupId"];
   for (const key of keys) {
-    const params = baseParams(pageUrl);
-    params.set("sort", "DateAsc");
-    params.set(key, groupId);
     try {
-      const payload = await fetchJson(PRODUCTS_URL, params, pageUrl);
-      const events = eventsFromProducts(payload, pageUrl.origin);
+      const events = await fetchProductPages(pageUrl, (params) => {
+        params.set("sort", "DateAsc");
+        params.set(key, groupId);
+      });
       if (events.length > 0) return events;
     } catch {
       continue;
     }
   }
   return [];
+}
+
+async function fetchProductPages(
+  pageUrl: URL,
+  apply: (params: URLSearchParams) => void
+): Promise<ScrapedEvent[]> {
+  const all: ScrapedEvent[] = [];
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const params = baseParams(pageUrl);
+    params.set("page", String(page));
+    params.set("top", String(PAGE_SIZE));
+    apply(params);
+    const payload = await fetchJson(PRODUCTS_URL, params, pageUrl);
+    const events = eventsFromProducts(payload, pageUrl.origin);
+    all.push(...events);
+    const record = asRecord(payload);
+    const totalPages = asNumber(record?.totalPages) ?? page;
+    if (events.length === 0 || page >= totalPages) break;
+  }
+  return all;
 }
 
 function eventsFromProducts(payload: unknown, origin: string): ScrapedEvent[] {
@@ -316,7 +234,7 @@ function baseParams(pageUrl: URL): URLSearchParams {
     webId: WEB_IDS[tld] ?? WEB_IDS.de,
     language: tld === "de" || tld === "at" || tld === "ch" ? "de" : "en",
     page: "1",
-    top: "50",
+    top: String(PAGE_SIZE),
   });
   const affiliate =
     pageUrl.searchParams.get("affiliate") ??
@@ -345,6 +263,10 @@ function cityOf(pageUrl: URL): string | null {
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function isSearchPath(pageUrl: URL): boolean {
+  return pageUrl.pathname.toLowerCase().includes("/search");
 }
 
 async function fetchJson(
@@ -398,9 +320,6 @@ async function eventimGet(
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
 
-// Im Browser nur CORS-safelisted Headers setzen. Custom-Header wie
-// sec-ch-ua würden ein OPTIONS-Preflight auslösen, das Eventim mit 403
-// beantwortet. Der echte Browser ergänzt Client-Hints selbst.
 function apiHeaders(pageUrl: URL): Record<string, string> {
   const headers: Record<string, string> = {
     accept: "application/json, text/plain, */*",
@@ -442,29 +361,6 @@ function clientHintHeaders(): Record<string, string> {
     "sec-ch-ua-platform": '"macOS"',
     "user-agent": USER_AGENT,
   };
-}
-
-async function mapPool<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let index = 0;
-  const worker = async () => {
-    while (index < items.length) {
-      const current = index++;
-      try {
-        results[current] = await fn(items[current]);
-      } catch {
-        results[current] = [] as unknown as R;
-      }
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, () => worker())
-  );
-  return results;
 }
 
 function linkOf(item: Record<string, unknown>): string | null {

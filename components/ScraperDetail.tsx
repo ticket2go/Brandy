@@ -1,11 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import ScraperPreview from "@/components/ScraperPreview";
 import Title from "@/components/Title";
-import { runScraper } from "@/lib/run-scraper";
-import { getScraper, type Scraper } from "@/lib/scrapers";
+import {
+  applyScraperSelection,
+  loadScraperPreview,
+  runScraper,
+} from "@/lib/run-scraper";
+import { FIELD_LABELS, type ScrapedEvent, type ScraperField } from "@/lib/scraped-event";
+import { getScraper, type Scraper, type ScraperSelection } from "@/lib/scrapers";
 
 type ScraperDetailProps = {
   id: string;
@@ -14,21 +20,56 @@ type ScraperDetailProps = {
 export default function ScraperDetail({ id }: ScraperDetailProps) {
   const [scraper, setScraper] = useState<Scraper | null>(null);
   const [ready, setReady] = useState(false);
-  const [running, setRunning] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [selection, setSelection] = useState<ScraperSelection | null>(null);
+  const autoLoad = useRef(false);
 
   useEffect(() => {
-    setScraper(getScraper(id));
+    const current = getScraper(id);
+    setScraper(current);
+    setSelection(current?.selection ?? null);
     setReady(true);
   }, [id]);
 
-  const handleRun = async () => {
+  useEffect(() => {
+    if (!scraper || autoLoad.current) return;
+    if (scraper.preview.length > 0) return;
+    autoLoad.current = true;
+    void handleLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scraper]);
+
+  const persist = (next: Scraper | null) => {
+    if (!next) return;
+    setScraper(next);
+    setSelection(next.selection);
+  };
+
+  const handleLoad = async () => {
     if (!scraper) return;
-    setRunning(true);
+    setLoading(true);
     try {
-      const next = await runScraper(scraper);
-      if (next) setScraper(next);
+      persist(await loadScraperPreview(scraper));
     } finally {
-      setRunning(false);
+      setLoading(false);
+    }
+  };
+
+  const handleApply = () => {
+    if (!scraper || !selection) return;
+    persist(applyScraperSelection(scraper, selection));
+  };
+
+  const handleRerun = async () => {
+    if (!scraper) return;
+    setLoading(true);
+    try {
+      const withSelection = selection
+        ? { ...scraper, selection }
+        : scraper;
+      persist(await runScraper(withSelection));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -42,7 +83,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     );
   }
 
-  if (!scraper) {
+  if (!scraper || !selection) {
     return (
       <main className="relative flex min-h-screen w-full flex-col items-stretch justify-start gap-12 py-16">
         <section className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6">
@@ -62,6 +103,10 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
       </main>
     );
   }
+
+  const selectedCount = selection.selectAll
+    ? scraper.preview.length
+    : selection.itemIds.length;
 
   return (
     <main className="relative flex min-h-screen w-full flex-col items-stretch justify-start gap-12 py-16">
@@ -84,85 +129,166 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
               {scraper.url}
             </p>
             <p className="mt-1 text-sm text-black/60">
-              {running
-                ? "Scraped Städteseite und Folgeseiten …"
-                : scraper.entryCount === 1
-                  ? "1 Event gefunden"
-                  : `${scraper.entryCount} Events gefunden`}
+              {loading
+                ? "Seite wird geladen …"
+                : scraper.preview.length === 0
+                  ? "Die Seite wird als Preview geladen."
+                  : "Klicke Events und Felder an, die übernommen werden sollen."}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleRun}
-            disabled={running}
-            className="rounded-full bg-black px-6 py-3 text-sm font-semibold text-white transition enabled:hover:bg-black/85 disabled:opacity-50"
-          >
-            {running ? "Läuft …" : "Scrapen"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleLoad}
+              disabled={loading}
+              className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
+            >
+              {scraper.preview.length > 0 ? "Aktualisieren" : "Seite laden"}
+            </button>
+            <button
+              type="button"
+              onClick={handleApply}
+              disabled={loading || scraper.preview.length === 0}
+              className="rounded-full bg-black px-6 py-3 text-sm font-semibold text-white transition enabled:hover:bg-black/85 disabled:opacity-50"
+            >
+              Übernehmen
+              {selectedCount > 0 ? ` (${selectedCount})` : ""}
+            </button>
+          </div>
         </div>
       </header>
 
-      <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6">
-        {scraper.error && !running ? (
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6">
+        {scraper.error && !loading ? (
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {scraper.error}
           </p>
         ) : null}
 
-        {scraper.events.length === 0 ? (
+        {scraper.preview.length === 0 ? (
           <p className="text-sm text-black/50">
-            {running
-              ? "Daten werden geladen …"
-              : "Noch keine Events. Starte den Scraper mit Scrapen."}
+            {loading
+              ? "Einträge werden von der Seite gelesen …"
+              : "Noch keine Preview. Lade die Seite, um Einträge auszuwählen."}
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-black/10">
-            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-              <thead className="bg-black/[0.04] text-[10px] uppercase tracking-[0.12em] text-black/45">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Eventname</th>
-                  <th className="px-4 py-3 font-medium">Ort</th>
-                  <th className="px-4 py-3 font-medium">Datum</th>
-                  <th className="px-4 py-3 font-medium">Uhrzeit</th>
-                  <th className="px-4 py-3 font-medium">Eventherobild</th>
-                  <th className="px-4 py-3 font-medium">Ticketlink</th>
-                  <th className="px-4 py-3 text-right font-medium">Preis</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scraper.events.map((event, index) => (
-                  <tr
-                    key={`${event.ticketUrl ?? event.name}-${event.startsAt ?? index}`}
-                    className="border-t border-black/5 align-top"
-                  >
-                    <td className="px-4 py-3 font-medium text-black">{event.name}</td>
-                    <td className="px-4 py-3 text-black/70">
-                      {event.location ?? "—"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-black/70">
-                      {event.date ?? "—"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-black/70">
-                      {event.time ?? "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <UrlCell url={event.heroImage} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <UrlCell url={event.ticketUrl} />
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-black/70">
-                      {event.price ?? "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ScraperPreview
+            preview={scraper.preview}
+            selection={selection}
+            onChange={setSelection}
+          />
         )}
+
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-black">Tabelle</h2>
+              <p className="text-sm text-black/50">
+                {scraper.events.length === 1
+                  ? "1 übernommenes Event"
+                  : `${scraper.events.length} übernommene Events`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleRerun}
+              disabled={loading}
+              className="w-fit text-sm font-medium text-black/60 underline decoration-black/20 hover:text-black hover:decoration-black disabled:opacity-50"
+            >
+              Auswahl neu scrapen
+            </button>
+          </div>
+
+          {scraper.events.length === 0 ? (
+            <p className="text-sm text-black/45">
+              Noch nichts übernommen. Wähle Einträge in der Preview und klicke
+              Übernehmen.
+            </p>
+          ) : (
+            <EventsTable
+              events={scraper.events}
+              fields={selection.fields}
+            />
+          )}
+        </div>
       </section>
     </main>
   );
+}
+
+function EventsTable({
+  events,
+  fields,
+}: {
+  events: ScrapedEvent[];
+  fields: ScraperField[];
+}) {
+  const columns = fields.length > 0 ? fields : (["name"] as ScraperField[]);
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-black/10">
+      <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+        <thead className="bg-black/[0.04] text-[10px] uppercase tracking-[0.12em] text-black/45">
+          <tr>
+            {columns.map((field) => (
+              <th
+                key={field}
+                className={`px-4 py-3 font-medium ${
+                  field === "price" ? "text-right" : ""
+                }`}
+              >
+                {FIELD_LABELS[field]}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((event, index) => (
+            <tr
+              key={`${event.ticketUrl ?? event.name}-${event.startsAt ?? index}`}
+              className="border-t border-black/5 align-top"
+            >
+              {columns.map((field) => (
+                <td
+                  key={field}
+                  className={`px-4 py-3 ${
+                    field === "name" ? "font-medium text-black" : "text-black/70"
+                  } ${
+                    field === "date" || field === "time" || field === "price"
+                      ? "whitespace-nowrap"
+                      : ""
+                  } ${field === "price" ? "text-right" : ""}`}
+                >
+                  <TableCell event={event} field={field} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TableCell({
+  event,
+  field,
+}: {
+  event: ScrapedEvent;
+  field: ScraperField;
+}) {
+  if (field === "heroImage") return <UrlCell url={event.heroImage} />;
+  if (field === "ticketUrl") return <UrlCell url={event.ticketUrl} />;
+  const value =
+    field === "name"
+      ? event.name
+      : field === "location"
+        ? event.location
+        : field === "date"
+          ? event.date
+          : field === "time"
+            ? event.time
+            : event.price;
+  return <>{value || "—"}</>;
 }
 
 function UrlCell({ url }: { url: string | null }) {

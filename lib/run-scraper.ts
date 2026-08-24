@@ -1,6 +1,12 @@
 import { isEventimUrl, scrapeEventim } from "@/lib/eventim-scraper";
 import type { ScrapedEvent } from "@/lib/scraped-event";
-import { updateScraper, type Scraper } from "@/lib/scrapers";
+import {
+  applySelection,
+  selectionForRerun,
+  updateScraper,
+  type Scraper,
+  type ScraperSelection,
+} from "@/lib/scrapers";
 
 type RunPayload = {
   events: ScrapedEvent[];
@@ -8,13 +14,48 @@ type RunPayload = {
   error: string | null;
 };
 
-export async function runScraper(scraper: Scraper): Promise<Scraper | null> {
+export async function loadScraperPreview(scraper: Scraper): Promise<Scraper | null> {
   const result = await scrapeWithFallback(scraper.url);
+  const firstLoad = scraper.preview.length === 0;
   return updateScraper(scraper.id, {
-    events: result.events,
-    entryCount: result.events.length,
+    preview: result.events,
+    ...(firstLoad
+      ? { events: [], entryCount: 0, selection: scraper.selection }
+      : {}),
     lastRunAt: new Date().toISOString(),
     error: result.events.length > 0 ? null : result.error ?? result.warning,
+  });
+}
+
+export async function runScraper(scraper: Scraper): Promise<Scraper | null> {
+  const result = await scrapeWithFallback(scraper.url);
+  const selection = selectionForRerun(scraper.selection);
+  const events = applySelection(result.events, selection);
+  return updateScraper(scraper.id, {
+    preview: result.events,
+    selection,
+    events,
+    entryCount: events.length,
+    lastRunAt: new Date().toISOString(),
+    error: result.events.length > 0 ? null : result.error ?? result.warning,
+  });
+}
+
+export function applyScraperSelection(
+  scraper: Scraper,
+  selection: ScraperSelection
+): Scraper | null {
+  const events = applySelection(scraper.preview, selection);
+  return updateScraper(scraper.id, {
+    selection,
+    events,
+    entryCount: events.length,
+    error:
+      scraper.preview.length === 0
+        ? scraper.error
+        : events.length > 0
+          ? null
+          : "Bitte mindestens ein Event anklicken.",
   });
 }
 

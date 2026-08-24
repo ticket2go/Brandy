@@ -15,7 +15,8 @@ export default function EventscraperPage() {
         </Link>
         <Title text="Eventscraper" />
         <p className="text-sm text-black/55">
-          Jede Card ist ein eigener Scraper für eine Seite.
+          Jede Card ist ein eigener Scraper. Nach dem Öffnen siehst du die
+          Seite und klickst die Elemente an, die übernommen werden sollen.
         </p>
       </header>
       <ScraperManager />

@@ -1,10 +1,25 @@
-import type { ScrapedEvent } from "@/lib/scraped-event";
+import {
+  eventKey,
+  SCRAPER_FIELDS,
+  type ScrapedEvent,
+  type ScraperField,
+} from "@/lib/scraped-event";
+
+export type { ScraperField };
+
+export type ScraperSelection = {
+  selectAll: boolean;
+  itemIds: string[];
+  fields: ScraperField[];
+};
 
 export type Scraper = {
   id: string;
   name: string;
   url: string;
   createdAt: string;
+  preview: ScrapedEvent[];
+  selection: ScraperSelection;
   events: ScrapedEvent[];
   entryCount: number;
   lastRunAt: string | null;
@@ -14,12 +29,22 @@ export type Scraper = {
 const STORAGE_KEY = "eventscraper.scrapers";
 const UPDATED_EVENT = "eventscraper-updated";
 
+export function defaultSelection(): ScraperSelection {
+  return {
+    selectAll: false,
+    itemIds: [],
+    fields: [...SCRAPER_FIELDS],
+  };
+}
+
 export function newScraper(name: string, url: string): Scraper {
   return {
     id: createId(),
     name,
     url,
     createdAt: new Date().toISOString(),
+    preview: [],
+    selection: defaultSelection(),
     events: [],
     entryCount: 0,
     lastRunAt: null,
@@ -77,17 +102,75 @@ export function normalizeUrl(input: string): string | null {
   }
 }
 
+export function applySelection(
+  preview: ScrapedEvent[],
+  selection: ScraperSelection
+): ScrapedEvent[] {
+  const fields = normalizeFields(selection.fields);
+  const items = selection.selectAll
+    ? preview
+    : preview.filter((event) => selection.itemIds.includes(eventKey(event)));
+  return items.map((event) => pickFields(event, fields));
+}
+
+export function selectionForRerun(selection: ScraperSelection): ScraperSelection {
+  if (!selection.selectAll && selection.itemIds.length === 0) {
+    return { ...selection, selectAll: true, fields: normalizeFields(selection.fields) };
+  }
+  return { ...selection, fields: normalizeFields(selection.fields) };
+}
+
+function pickFields(event: ScrapedEvent, fields: ScraperField[]): ScrapedEvent {
+  const keep = new Set(fields);
+  return {
+    name: keep.has("name") ? event.name : "",
+    venue: keep.has("location") ? event.venue : null,
+    city: keep.has("location") ? event.city : null,
+    location: keep.has("location") ? event.location : null,
+    date: keep.has("date") ? event.date : null,
+    time: keep.has("time") ? event.time : null,
+    startsAt: event.startsAt,
+    heroImage: keep.has("heroImage") ? event.heroImage : null,
+    ticketUrl: keep.has("ticketUrl") ? event.ticketUrl : null,
+    price: keep.has("price") ? event.price : null,
+  };
+}
+
+function normalizeFields(fields: ScraperField[]): ScraperField[] {
+  const allowed = new Set<string>(SCRAPER_FIELDS);
+  const next = fields.filter((field) => allowed.has(field));
+  return next.length > 0 ? next : [...SCRAPER_FIELDS];
+}
+
 function withDefaults(row: Scraper): Scraper {
   const events = Array.isArray(row.events) ? row.events.filter(isEvent) : [];
+  const preview = Array.isArray(row.preview) ? row.preview.filter(isEvent) : [];
   return {
     id: row.id,
     name: row.name,
     url: row.url,
     createdAt: row.createdAt,
+    preview,
+    selection: normalizeStoredSelection(row.selection),
     events,
     entryCount: typeof row.entryCount === "number" ? row.entryCount : events.length,
     lastRunAt: row.lastRunAt ?? null,
     error: typeof row.error === "string" ? row.error : null,
+  };
+}
+
+function normalizeStoredSelection(value: unknown): ScraperSelection {
+  const fallback = defaultSelection();
+  if (!value || typeof value !== "object") return fallback;
+  const row = value as Partial<ScraperSelection>;
+  return {
+    selectAll: row.selectAll === true,
+    itemIds: Array.isArray(row.itemIds)
+      ? row.itemIds.filter((item): item is string => typeof item === "string")
+      : [],
+    fields: normalizeFields(
+      Array.isArray(row.fields) ? (row.fields as ScraperField[]) : fallback.fields
+    ),
   };
 }
 
