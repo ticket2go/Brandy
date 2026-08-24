@@ -204,7 +204,10 @@ function toScraperInsert(scraper: Scraper) {
     warning: scraper.warning,
     follow_up: (scraper.followUp ?? null) as unknown as Json,
     last_update: (scraper.lastUpdate ?? null) as unknown as Json,
-    selection: scraper.selection as unknown as Json,
+    selection: {
+      ...scraper.selection,
+      lastIngest: scraper.lastIngest,
+    } as unknown as Json,
     created_at: scraper.createdAt,
   };
 }

@@ -13,9 +13,11 @@ type ScraperCardProps = {
   onRun: () => void;
   onFollowUps: () => void;
   onUpdate: () => void;
+  onIngest: () => void;
   onStopFollowUps?: () => void;
   onDelete: () => void;
   updating?: boolean;
+  ingesting?: boolean;
   searchProgress?: SearchProgress | null;
 };
 
@@ -26,12 +28,14 @@ export default function ScraperCard({
   onRun,
   onFollowUps,
   onUpdate,
+  onIngest,
   onStopFollowUps,
   onDelete,
   updating = false,
+  ingesting = false,
   searchProgress = null,
 }: ScraperCardProps) {
-  const busy = running || following || updating;
+  const busy = running || following || updating || ingesting;
   const hasEntries =
     scraper.entryCount > 0 ||
     scraper.preview.length > 0 ||
@@ -88,6 +92,13 @@ export default function ScraperCard({
               {scraper.lastUpdate.removed} gelöscht
             </p>
           ) : null}
+          {scraper.lastIngest && !busy ? (
+            <p className="mt-1 text-[11px] text-white/45">
+              GetHyped: {scraper.lastIngest.accepted} angenommen ·{" "}
+              {scraper.lastIngest.rejected} abgelehnt · {scraper.lastIngest.skipped}{" "}
+              übersprungen
+            </p>
+          ) : null}
           {scraper.error && !busy ? (
             <p className="mt-1 text-[11px] text-red-300">{scraper.error}</p>
           ) : null}
@@ -110,6 +121,14 @@ export default function ScraperCard({
             className="rounded-full bg-white/15 px-4 py-2 text-[12px] font-semibold text-white transition enabled:hover:bg-white/25 disabled:opacity-40"
           >
             {updating ? "Update …" : "Update"}
+          </button>
+          <button
+            type="button"
+            onClick={onIngest}
+            disabled={busy || !hasEntries}
+            className="rounded-full bg-white/15 px-4 py-2 text-[12px] font-semibold text-white transition enabled:hover:bg-white/25 disabled:opacity-40"
+          >
+            {ingesting ? "Senden …" : "An GetHyped senden"}
           </button>
           {following || updating ? (
             <button

@@ -4,6 +4,10 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import ConfirmDialog from "./ConfirmDialog";
 import ScraperCard from "./ScraperCard";
+import {
+  ingestToGethyped,
+  loadGethypedToken,
+} from "@/lib/gethyped-ingest";
 import { runScraper, scrapeScraperFollowUps, updateScraperEntries } from "@/lib/run-scraper";
 import type { SearchProgress } from "@/lib/search-progress";
 import {
@@ -24,6 +28,7 @@ export default function ScraperManager() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [followUpId, setFollowUpId] = useState<string | null>(null);
   const [updateId, setUpdateId] = useState<string | null>(null);
+  const [ingestId, setIngestId] = useState<string | null>(null);
   const [searchProgress, setSearchProgress] = useState<
     Record<string, SearchProgress>
   >({});
@@ -266,6 +271,46 @@ export default function ScraperManager() {
     }
   };
 
+  const handleIngest = async (scraper: Scraper) => {
+    const events =
+      scraper.preview.length > 0 ? scraper.preview : scraper.events;
+    if (events.length === 0) return;
+    setIngestId(scraper.id);
+    try {
+      const ingest = await ingestToGethyped(events, loadGethypedToken());
+      const next = updateScraper(scraper.id, { lastIngest: ingest });
+      if (next) {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === next.id ? next : item))
+        );
+      }
+    } catch (error) {
+      const next = updateScraper(scraper.id, {
+        lastIngest: {
+          at: new Date().toISOString(),
+          sent: 0,
+          accepted: 0,
+          rejected: 0,
+          skipped: 0,
+          batches: [],
+          error:
+            error instanceof Error
+              ? error.message
+              : "Senden an GetHyped ist fehlgeschlagen.",
+          rejectedItems: [],
+          skippedItems: [],
+        },
+      });
+      if (next) {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === next.id ? next : item))
+        );
+      }
+    } finally {
+      setIngestId(null);
+    }
+  };
+
   const confirmDelete = () => {
     if (!pendingDelete) return;
     const id = pendingDelete.id;
@@ -307,10 +352,12 @@ export default function ScraperManager() {
                 running={runningId === scraper.id}
                 following={followUpId === scraper.id}
                 updating={updateId === scraper.id}
+                ingesting={ingestId === scraper.id}
                 searchProgress={searchProgress[scraper.id] ?? null}
                 onRun={() => handleRun(scraper)}
                 onFollowUps={() => handleFollowUps(scraper)}
                 onUpdate={() => handleUpdate(scraper)}
+                onIngest={() => handleIngest(scraper)}
                 onStopFollowUps={handleStopFollowUps}
                 onDelete={() => setPendingDelete(scraper)}
               />

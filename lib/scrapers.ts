@@ -1,5 +1,9 @@
 import type { ScraperUpdate } from "@/lib/event-diff";
 import {
+  normalizeIngest,
+  type ScraperIngest,
+} from "@/lib/gethyped-ingest";
+import {
   isFollowUpGroup,
   type FollowUpGroup,
 } from "@/lib/follow-up";
@@ -48,6 +52,7 @@ export type Scraper = {
   warning: string | null;
   followUp: ScraperFollowUp | null;
   lastUpdate: ScraperUpdate | null;
+  lastIngest: ScraperIngest | null;
 };
 
 export type PersistOptions = {
@@ -84,6 +89,7 @@ export function newScraper(name: string, url: string): Scraper {
     warning: null,
     followUp: null,
     lastUpdate: null,
+    lastIngest: null,
   };
 }
 
@@ -245,6 +251,7 @@ function scrapersFromRows(
       warning: row.warning,
       followUp: row.follow_up as ScraperFollowUp | null,
       lastUpdate: row.last_update as ScraperUpdate | null,
+      lastIngest: storedIngest(row.selection),
     });
   });
 }
@@ -293,7 +300,13 @@ function withDefaults(row: Scraper): Scraper {
     warning: typeof row.warning === "string" ? row.warning : null,
     followUp: normalizeFollowUp(row.followUp),
     lastUpdate: normalizeUpdate(row.lastUpdate),
+    lastIngest: normalizeIngest(row.lastIngest) ?? storedIngest(row.selection),
   };
+}
+
+function storedIngest(selection: unknown): ScraperIngest | null {
+  if (!selection || typeof selection !== "object") return null;
+  return normalizeIngest((selection as { lastIngest?: unknown }).lastIngest);
 }
 
 function normalizeUpdate(value: unknown): ScraperUpdate | null {
