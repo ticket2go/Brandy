@@ -9,6 +9,7 @@ import {
   applyScraperSelection,
   loadScraperPreview,
   runScraper,
+  scrapeScraperFollowUps,
 } from "@/lib/run-scraper";
 import { FIELD_LABELS, type ScrapedEvent, type ScraperField } from "@/lib/scraped-event";
 import { getScraper, type Scraper, type ScraperSelection } from "@/lib/scrapers";
@@ -21,6 +22,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
   const [scraper, setScraper] = useState<Scraper | null>(null);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [following, setFollowing] = useState(false);
   const [selection, setSelection] = useState<ScraperSelection | null>(null);
   const autoLoad = useRef(false);
 
@@ -70,6 +72,16 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
       persist(await runScraper(withSelection));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleFollowUps = async () => {
+    if (!scraper) return;
+    setFollowing(true);
+    try {
+      persist(await scrapeScraperFollowUps(scraper));
+    } finally {
+      setFollowing(false);
     }
   };
 
@@ -130,26 +142,36 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             </p>
             <p className="mt-1 text-sm text-black/60">
               {loading
-                ? "Suchseite und Folgeseiten pro Eintrag werden geladen …"
-                : scraper.preview.length === 0
-                  ? "Die Seite wird als Preview geladen."
-                  : "Klicke Events und Felder an, die übernommen werden sollen."}
+                ? "Suchseite inkl. Pagination wird geladen …"
+                : following
+                  ? "Artist-Unterseiten werden gescraped …"
+                  : scraper.preview.length === 0
+                    ? "Mit Scrapen die Suchseite inkl. aller Seiten laden."
+                    : "Danach Unterseiten Scrapen, um die Artist-Seiten zu holen."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={handleLoad}
-              disabled={loading}
+              onClick={handleRerun}
+              disabled={loading || following}
+              className="rounded-full bg-black px-6 py-3 text-sm font-semibold text-white transition enabled:hover:bg-black/85 disabled:opacity-50"
+            >
+              {loading ? "Läuft …" : "Scrapen"}
+            </button>
+            <button
+              type="button"
+              onClick={handleFollowUps}
+              disabled={loading || following || scraper.preview.length === 0}
               className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
             >
-              {scraper.preview.length > 0 ? "Aktualisieren" : "Seite laden"}
+              {following ? "Läuft …" : "Unterseiten Scrapen"}
             </button>
             <button
               type="button"
               onClick={handleApply}
-              disabled={loading || scraper.preview.length === 0}
-              className="rounded-full bg-black px-6 py-3 text-sm font-semibold text-white transition enabled:hover:bg-black/85 disabled:opacity-50"
+              disabled={loading || following || scraper.preview.length === 0}
+              className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
             >
               Übernehmen
               {selectedCount > 0 ? ` (${selectedCount})` : ""}
@@ -159,12 +181,12 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
       </header>
 
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6">
-        {scraper.error && !loading ? (
+        {scraper.error && !loading && !following ? (
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {scraper.error}
           </p>
         ) : null}
-        {scraper.warning && !loading ? (
+        {scraper.warning && !loading && !following ? (
           <p className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-sm text-black/60">
             {scraper.warning}
           </p>
@@ -173,8 +195,10 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
         {scraper.preview.length === 0 ? (
           <p className="text-sm text-black/50">
             {loading
-              ? "Einträge und „Alle Events anzeigen“-Seiten werden gelesen …"
-              : "Noch keine Preview. Lade die Seite, um Einträge auszuwählen."}
+              ? "Einträge der Suchseite werden gelesen …"
+              : following
+                ? "Unterseiten werden gelesen …"
+                : "Noch keine Preview. Starte mit Scrapen."}
           </p>
         ) : (
           <ScraperPreview
@@ -196,11 +220,11 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             </div>
             <button
               type="button"
-              onClick={handleRerun}
-              disabled={loading}
+              onClick={handleLoad}
+              disabled={loading || following}
               className="w-fit text-sm font-medium text-black/60 underline decoration-black/20 hover:text-black hover:decoration-black disabled:opacity-50"
             >
-              Auswahl neu scrapen
+              Preview neu laden
             </button>
           </div>
 

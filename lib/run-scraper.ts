@@ -1,4 +1,8 @@
-import { isEventimUrl, scrapeEventim } from "@/lib/eventim-scraper";
+import {
+  isEventimUrl,
+  scrapeEventim,
+  scrapeEventimFollowUps,
+} from "@/lib/eventim-scraper";
 import type { ScrapedEvent } from "@/lib/scraped-event";
 import {
   applySelection,
@@ -37,6 +41,29 @@ export async function runScraper(scraper: Scraper): Promise<Scraper | null> {
     entryCount: events.length,
     lastRunAt: new Date().toISOString(),
     error: result.events.length > 0 ? null : result.error,
+    warning: result.warning,
+  });
+}
+
+export async function scrapeScraperFollowUps(
+  scraper: Scraper
+): Promise<Scraper | null> {
+  const source =
+    scraper.preview.length > 0 ? scraper.preview : scraper.events;
+  const result = await followUpsWithFallback(scraper.url, source);
+  const selection = {
+    ...scraper.selection,
+    selectAll: true,
+    itemIds: [],
+  };
+  const events = applySelection(result.events, selection);
+  return updateScraper(scraper.id, {
+    preview: result.events,
+    selection,
+    events,
+    entryCount: events.length,
+    lastRunAt: new Date().toISOString(),
+    error: result.events.length > 0 ? null : result.error ?? result.warning,
     warning: result.warning,
   });
 }
@@ -89,12 +116,52 @@ async function scrapeWithFallback(url: string): Promise<RunPayload> {
   return scrapeViaApi(url);
 }
 
-async function scrapeViaApi(url: string): Promise<RunPayload> {
+async function followUpsWithFallback(
+  url: string,
+  events: ScrapedEvent[]
+): Promise<RunPayload> {
+  if (typeof window !== "undefined" && isEventimUrl(url)) {
+    try {
+      const result = await scrapeEventimFollowUps(events, url);
+      if (result.events.length > 0) {
+        return { ...result, error: null };
+      }
+      const server = await scrapeViaApi(url, { followUps: true, events });
+      if (server.events.length > 0) return server;
+      return {
+        events: [],
+        warning: server.warning ?? result.warning,
+        error: server.error,
+      };
+    } catch (error) {
+      const server = await scrapeViaApi(url, { followUps: true, events });
+      if (server.events.length > 0) return server;
+      if (server.error || server.warning) return server;
+      return {
+        events: [],
+        warning: null,
+        error:
+          error instanceof Error ? error.message : "Scraping fehlgeschlagen.",
+      };
+    }
+  }
+
+  return scrapeViaApi(url, { followUps: true, events });
+}
+
+async function scrapeViaApi(
+  url: string,
+  extra?: { followUps?: boolean; events?: ScrapedEvent[] }
+): Promise<RunPayload> {
   try {
     const response = await fetch("/api/scraper/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({
+        url,
+        followUps: extra?.followUps ?? false,
+        events: extra?.events ?? [],
+      }),
     });
     const payload = (await response.json()) as {
       events?: ScrapedEvent[];

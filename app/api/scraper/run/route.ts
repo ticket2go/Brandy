@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { isEventimUrl, scrapeEventim } from "@/lib/eventim-scraper";
+import {
+  isEventimUrl,
+  scrapeEventim,
+  scrapeEventimFollowUps,
+} from "@/lib/eventim-scraper";
+import type { ScrapedEvent } from "@/lib/scraped-event";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,8 +40,22 @@ export async function POST(request: Request) {
     );
   }
 
+  const followUps =
+    typeof body === "object" && body !== null && "followUps" in body
+      ? Boolean((body as { followUps?: unknown }).followUps)
+      : false;
+  const sourceEvents =
+    typeof body === "object" &&
+    body !== null &&
+    "events" in body &&
+    Array.isArray((body as { events?: unknown }).events)
+      ? ((body as { events: ScrapedEvent[] }).events)
+      : [];
+
   try {
-    const result = await scrapeEventim(rawUrl);
+    const result = followUps
+      ? await scrapeEventimFollowUps(sourceEvents, rawUrl)
+      : await scrapeEventim(rawUrl);
     return NextResponse.json({ ...result, error: null });
   } catch (error) {
     return NextResponse.json(

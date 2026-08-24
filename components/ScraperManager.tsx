@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import ConfirmDialog from "./ConfirmDialog";
 import ScraperCard from "./ScraperCard";
-import { runScraper } from "@/lib/run-scraper";
+import { runScraper, scrapeScraperFollowUps } from "@/lib/run-scraper";
 import {
   loadScrapers,
   newScraper,
@@ -17,6 +17,7 @@ export default function ScraperManager() {
   const [scrapers, setScrapers] = useState<Scraper[]>([]);
   const [ready, setReady] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [followUpId, setFollowUpId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -157,6 +158,20 @@ export default function ScraperManager() {
     }
   };
 
+  const handleFollowUps = async (scraper: Scraper) => {
+    setFollowUpId(scraper.id);
+    try {
+      const next = await scrapeScraperFollowUps(scraper);
+      if (next) {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === next.id ? next : item))
+        );
+      }
+    } finally {
+      setFollowUpId(null);
+    }
+  };
+
   const confirmDelete = () => {
     if (!pendingDelete) return;
     const nextList = scrapers.filter((item) => item.id !== pendingDelete.id);
@@ -196,7 +211,9 @@ export default function ScraperManager() {
                 key={scraper.id}
                 scraper={scraper}
                 running={runningId === scraper.id}
+                following={followUpId === scraper.id}
                 onRun={() => handleRun(scraper)}
+                onFollowUps={() => handleFollowUps(scraper)}
                 onDelete={() => setPendingDelete(scraper)}
               />
             ))}

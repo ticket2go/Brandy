@@ -67,16 +67,30 @@ export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
   }
 
   const unique = sortEvents(dedupeEvents(events)).map(withDisplayFields);
-  const expanded = await expandFollowUpPages(unique, pageUrl);
-  const result = sortEvents(dedupeEvents(expanded)).map(withDisplayFields);
   return {
-    events: result,
+    events: unique,
     warning:
-      result.length === 0
-        ? null
-        : totalResults != null && unique.length < totalResults
-          ? `Suchseite: ${unique.length} von ${totalResults} Einträgen, plus Folgeseiten.`
-          : null,
+      totalResults != null && totalResults > unique.length
+        ? `Es wurden ${unique.length} von ${totalResults} Einträgen der Seite geladen.`
+        : null,
+  };
+}
+
+export async function scrapeEventimFollowUps(
+  events: ScrapedEvent[],
+  rawUrl: string
+): Promise<ScrapeResult> {
+  if (events.length === 0) {
+    return {
+      events: [],
+      warning: "Keine Einträge vorhanden. Bitte zuerst die Seite scrapen.",
+    };
+  }
+  const pageUrl = new URL(rawUrl);
+  const expanded = await expandFollowUpPages(events, pageUrl);
+  return {
+    events: sortEvents(dedupeEvents(expanded)).map(withDisplayFields),
+    warning: null,
   };
 }
 

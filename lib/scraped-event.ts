@@ -9,6 +9,7 @@ export type ScrapedEvent = {
   heroImage: string | null;
   ticketUrl: string | null;
   price: string | null;
+  productGroupId?: string | null;
 };
 
 export const SCRAPER_FIELDS = [
