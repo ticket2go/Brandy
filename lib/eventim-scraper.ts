@@ -14,6 +14,10 @@ export type ScrapeResult = {
   warning: string | null;
 };
 
+type ListedEvent = ScrapedEvent & {
+  productGroupId: string | null;
+};
+
 const PRODUCTS_URL =
   "https://public-api.eventim.com/websearch/search/api/exploration/v1/products";
 
@@ -63,12 +67,16 @@ export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
   }
 
   const unique = sortEvents(dedupeEvents(events)).map(withDisplayFields);
+  const expanded = await expandFollowUpPages(unique, pageUrl);
+  const result = sortEvents(dedupeEvents(expanded)).map(withDisplayFields);
   return {
-    events: unique,
+    events: result,
     warning:
-      totalResults != null && totalResults > unique.length
-        ? `Es wurden ${unique.length} von ${totalResults} Einträgen der Folgeseiten geladen.`
-        : null,
+      result.length === 0
+        ? null
+        : totalResults != null && unique.length < totalResults
+          ? `Suchseite: ${unique.length} von ${totalResults} Einträgen, plus Folgeseiten.`
+          : null,
   };
 }
 
@@ -104,6 +112,80 @@ async function fetchPageEvents(
   }
 
   return { events: [], totalResults: null };
+}
+
+async function expandFollowUpPages(
+  events: ScrapedEvent[],
+  pageUrl: URL
+): Promise<ScrapedEvent[]> {
+  const grouped = new Map<string, ScrapedEvent[]>();
+  const rest: ScrapedEvent[] = [];
+
+  for (const event of events) {
+    const listedId =
+      (event as ListedEvent).productGroupId ??
+      productGroupIdFromLink(event.ticketUrl ?? "");
+    if (!listedId) {
+      rest.push(withHeaderImage(event));
+      continue;
+    }
+    const bucket = grouped.get(listedId) ?? [];
+    bucket.push(event);
+    grouped.set(listedId, bucket);
+  }
+
+  const limit = createLimiter(RANGE_CONCURRENCY);
+  const chunks = await Promise.all(
+    [...grouped.entries()].map(([groupId, originals]) =>
+      limit(async () => {
+        try {
+          const follow = await fetchAllProductPages(pageUrl, (params) => {
+            params.set("sort", "DateAsc");
+            params.set("product_group_id", groupId);
+          });
+          if (follow.events.length > 1) {
+            const header =
+              headerImageFrom(originals[0]?.heroImage) ?? originals[0]?.heroImage;
+            return follow.events.map((event) =>
+              withHeaderImage(
+                {
+                  ...event,
+                  name: event.name || originals[0]?.name || event.name,
+                  heroImage: header ?? event.heroImage,
+                },
+                header
+              )
+            );
+          }
+        } catch {
+          // Eintrag ohne Folgeseite behalten.
+        }
+        return originals.map((event) => withHeaderImage(event));
+      })
+    )
+  );
+
+  return [...rest, ...chunks.flat()];
+}
+
+function withHeaderImage(
+  event: ScrapedEvent,
+  header?: string | null
+): ScrapedEvent {
+  const next = header ?? headerImageFrom(event.heroImage) ?? event.heroImage;
+  return next === event.heroImage ? event : { ...event, heroImage: next };
+}
+
+function headerImageFrom(listing: string | null): string | null {
+  if (!listing) return null;
+  if (!/\/teaser\/\d+x\d+\//i.test(listing)) return null;
+  let next = listing.replace(/\/teaser\/\d+x\d+\//i, "/teaser/artworks/");
+  if (/-tickets-\d+\.(jpe?g|png|webp)$/i.test(next)) {
+    next = next.replace(/-tickets-\d+\.(jpe?g|png|webp)$/i, "-tickets-header.$1");
+  } else {
+    next = next.replace(/-\d{4}\.(jpe?g|png|webp)$/i, "-header.$1");
+  }
+  return next === listing ? null : next;
 }
 
 async function fetchEventsFromHtml(pageUrl: URL): Promise<ScrapedEvent[]> {
@@ -273,10 +355,10 @@ function midDate(from: string, to: string): string {
   return new Date((start + end) / 2).toISOString().slice(0, 10);
 }
 
-function eventsFromProducts(payload: unknown, origin: string): ScrapedEvent[] {
+function eventsFromProducts(payload: unknown, origin: string): ListedEvent[] {
   const record = asRecord(payload);
   if (!Array.isArray(record?.products)) return [];
-  const events: ScrapedEvent[] = [];
+  const events: ListedEvent[] = [];
 
   for (const raw of record.products) {
     const product = asRecord(raw);
@@ -300,6 +382,9 @@ function eventsFromProducts(payload: unknown, origin: string): ScrapedEvent[] {
       heroImage: absolute(imageOf(product), origin),
       ticketUrl: absolute(linkOf(product), origin),
       price: priceOf(product),
+      productGroupId:
+        asString(product.productGroupId) ??
+        asString(asRecord(product.productGroup)?.id),
     });
   }
   return events;
