@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import FollowUpStatus from "@/components/FollowUpStatus";
 import ScraperPreview from "@/components/ScraperPreview";
 import Title from "@/components/Title";
-import { followUpProgressOf } from "@/lib/follow-up";
+import { canResumeFollowUp, followUpProgressOf } from "@/lib/follow-up";
 import {
   applyScraperSelection,
   loadScraperPreview,
@@ -27,6 +27,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
   const [following, setFollowing] = useState(false);
   const [selection, setSelection] = useState<ScraperSelection | null>(null);
   const autoLoad = useRef(false);
+  const stopFollowUps = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const current = getScraper(id);
@@ -87,14 +88,25 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
 
   const handleFollowUps = async () => {
     if (!scraper) return;
+    const controller = new AbortController();
+    stopFollowUps.current = controller;
     setFollowing(true);
     try {
       persist(
-        await scrapeScraperFollowUps(scraper, (_progress, next) => persist(next))
+        await scrapeScraperFollowUps(
+          scraper,
+          (_progress, next) => persist(next),
+          controller.signal
+        )
       );
     } finally {
+      if (stopFollowUps.current === controller) stopFollowUps.current = null;
       setFollowing(false);
     }
+  };
+
+  const handleStopFollowUps = () => {
+    stopFollowUps.current?.abort();
   };
 
   if (!ready) {
@@ -164,9 +176,11 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
                 ? "Suchseite inkl. Pagination wird geladen …"
                 : following && followUp
                   ? `${followUp.done} / ${followUp.total} Unterseiten geladen.`
-                  : scraper.preview.length === 0
-                    ? "Mit Scrapen die Suchseite inkl. aller Seiten laden."
-                    : "Danach Unterseiten Scrapen, um die Artist-Seiten zu holen."}
+                  : followUp && canResumeFollowUp(followUp.groups)
+                    ? `${followUp.done} / ${followUp.total} Unterseiten angehalten. Mit Weiter fortsetzen.`
+                    : scraper.preview.length === 0
+                      ? "Mit Scrapen die Suchseite inkl. aller Seiten laden."
+                      : "Danach Unterseiten Scrapen, um die Artist-Seiten zu holen."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -178,18 +192,27 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             >
               {loading ? "Läuft …" : "Scrapen"}
             </button>
-            <button
-              type="button"
-              onClick={handleFollowUps}
-              disabled={loading || following || scraper.preview.length === 0}
-              className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
-            >
-              {following && followUp
-                ? `${followUp.done}/${followUp.total}`
-                : following
-                  ? "Läuft …"
+            {following ? (
+              <button
+                type="button"
+                onClick={handleStopFollowUps}
+                className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition hover:bg-black/5"
+              >
+                Anhalten
+                {followUp ? ` ${followUp.done}/${followUp.total}` : ""}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleFollowUps}
+                disabled={loading || scraper.preview.length === 0}
+                className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
+              >
+                {followUp && canResumeFollowUp(followUp.groups)
+                  ? "Weiter"
                   : "Unterseiten Scrapen"}
-            </button>
+              </button>
+            )}
             <button
               type="button"
               onClick={handleApply}
@@ -215,7 +238,12 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
           </p>
         ) : null}
 
-        {followUp ? <FollowUpStatus progress={followUp} /> : null}
+        {followUp ? (
+          <FollowUpStatus
+            progress={followUp}
+            onStop={following ? handleStopFollowUps : undefined}
+          />
+        ) : null}
 
         {scraper.preview.length === 0 ? (
           <p className="text-sm text-black/50">

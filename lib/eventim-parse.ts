@@ -15,15 +15,29 @@ export type ParsedPage = {
 const EVENT_TYPE = /event$/i;
 const SHOW_ALL_LABEL = /alle\s+\d+\s+events?\s+anzeigen|alle\s+events?\s+anzeigen|alle\s+termine/i;
 
+export function artworkContentImage(
+  html: string,
+  pageUrl: string
+): string | null {
+  const origin = originOf(pageUrl);
+  for (const fragment of classFragments(html, "artwork-content")) {
+    const image = imageFromFragment(fragment, origin);
+    if (image) return image;
+  }
+  return null;
+}
+
 export function parseEventimPage(html: string, pageUrl: string): ParsedPage {
   const origin = originOf(pageUrl);
-  const heroImage = absolute(
-    metaContent(html, "og:image") ??
-      metaContent(html, "og:image:url") ??
-      metaContent(html, "twitter:image") ??
-      linkHref(html, "image_src"),
-    origin
-  );
+  const heroImage =
+    artworkContentImage(html, pageUrl) ??
+    absolute(
+      metaContent(html, "og:image") ??
+        metaContent(html, "og:image:url") ??
+        metaContent(html, "twitter:image") ??
+        linkHref(html, "image_src"),
+      origin
+    );
   const title =
     metaContent(html, "og:title") ?? metaContent(html, "twitter:title") ?? heading(html);
 
@@ -288,6 +302,63 @@ function linkOf(record: Record<string, unknown>): string | null {
   const domain = str(holder.domain);
   if (path && domain) return `${domain.replace(/\/$/, "")}${path}`;
   return path;
+}
+
+function classFragments(html: string, className: string): string[] {
+  const out: string[] = [];
+  const opener = new RegExp(
+    `<div\\b[^>]*class=["'][^"']*\\b${escape(className)}\\b[^"']*["'][^>]*>`,
+    "gi"
+  );
+  let match: RegExpExecArray | null;
+  while ((match = opener.exec(html)) !== null) {
+    out.push(html.slice(match.index, match.index + 8000));
+  }
+  return out;
+}
+
+function imageFromFragment(html: string, origin: string): string | null {
+  const tagged =
+    firstAttr(html, "img", "src") ??
+    firstAttr(html, "img", "data-src") ??
+    firstAttr(html, "img", "data-original") ??
+    firstSrcset(html, "img") ??
+    firstSrcset(html, "source") ??
+    firstAttr(html, "source", "src");
+  if (tagged) return absolute(tagged, origin);
+
+  const background = html.match(
+    /background(?:-image)?\s*:\s*url\(\s*['"]?([^'")\s]+)['"]?\s*\)/i
+  );
+  return absolute(background?.[1] ?? null, origin);
+}
+
+function firstAttr(html: string, tag: string, name: string): string | null {
+  const pattern = new RegExp(`<${tag}\\b([^>]*)>`, "gi");
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html)) !== null) {
+    const value = attr(match[1] ?? "", name);
+    if (value && !value.startsWith("data:")) return value;
+  }
+  return null;
+}
+
+function firstSrcset(html: string, tag: string): string | null {
+  const raw = firstAttr(html, tag, "srcset") ?? firstAttr(html, tag, "data-srcset");
+  if (!raw) return null;
+  let best: string | null = null;
+  let bestWidth = -1;
+  for (const part of raw.split(",")) {
+    const [url, size] = part.trim().split(/\s+/, 2);
+    if (!url) continue;
+    const width = Number.parseInt(size ?? "", 10);
+    const score = Number.isFinite(width) ? width : 0;
+    if (score >= bestWidth) {
+      best = url;
+      bestWidth = score;
+    }
+  }
+  return best;
 }
 
 function imageOf(value: unknown): string | null {

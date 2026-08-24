@@ -4,7 +4,12 @@ import {
   type ScrapedEvent,
 } from "@/lib/scraped-event";
 
-export type FollowUpStatus = "pending" | "running" | "done" | "error";
+export type FollowUpStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "error"
+  | "paused";
 
 export type FollowUpGroup = {
   id: string;
@@ -86,6 +91,23 @@ export function followUpProgressOf(
   };
 }
 
+export function canResumeFollowUp(groups: FollowUpGroup[]): boolean {
+  return groups.some(
+    (group) =>
+      group.status === "paused" ||
+      group.status === "pending" ||
+      group.status === "error"
+  );
+}
+
+export function pauseFollowUpGroups(groups: FollowUpGroup[]): FollowUpGroup[] {
+  return groups.map((group) =>
+    group.status === "pending" || group.status === "running"
+      ? { ...group, status: "paused" }
+      : group
+  );
+}
+
 export function isFollowUpGroup(value: unknown): value is FollowUpGroup {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
@@ -95,7 +117,8 @@ export function isFollowUpGroup(value: unknown): value is FollowUpGroup {
     (row.status === "pending" ||
       row.status === "running" ||
       row.status === "done" ||
-      row.status === "error") &&
+      row.status === "error" ||
+      row.status === "paused") &&
     typeof row.listingCount === "number" &&
     typeof row.eventCount === "number"
   );

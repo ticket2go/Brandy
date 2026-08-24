@@ -1,9 +1,14 @@
-import { absolute, parseEventimPage } from "@/lib/eventim-parse";
+import {
+  absolute,
+  artworkContentImage,
+  parseEventimPage,
+} from "@/lib/eventim-parse";
 import {
   eventsForGroup,
   followUpGroupId,
   followUpProgressOf,
   listFollowUpGroups,
+  pauseFollowUpGroups,
   replaceGroupEvents,
   type FollowUpGroup,
   type FollowUpProgress,
@@ -31,6 +36,8 @@ type ListedEvent = ScrapedEvent & {
 
 const PRODUCTS_URL =
   "https://public-api.eventim.com/websearch/search/api/exploration/v1/products";
+const ATTRACTIONS_URL =
+  "https://public-api.eventim.com/websearch/search/api/exploration/v1/attractions";
 
 const WEB_IDS: Record<string, string> = {
   de: "web__eventim-de",
@@ -88,10 +95,16 @@ export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
   };
 }
 
+export type FollowUpScrapeOptions = {
+  onProgress?: (progress: FollowUpProgress, events: ScrapedEvent[]) => void;
+  signal?: AbortSignal;
+  groups?: FollowUpGroup[];
+};
+
 export async function scrapeEventimFollowUps(
   events: ScrapedEvent[],
   rawUrl: string,
-  onProgress?: (progress: FollowUpProgress, events: ScrapedEvent[]) => void
+  options?: FollowUpScrapeOptions
 ): Promise<ScrapeResult> {
   if (events.length === 0) {
     return {
@@ -100,11 +113,7 @@ export async function scrapeEventimFollowUps(
     };
   }
   const pageUrl = new URL(rawUrl);
-  const expanded = await expandFollowUpPages(events, pageUrl, onProgress);
-  return {
-    events: expanded,
-    warning: null,
-  };
+  return expandFollowUpPages(events, pageUrl, options);
 }
 
 export async function scrapeEventimFollowUpGroup(
@@ -162,15 +171,24 @@ async function fetchPageEvents(
 async function expandFollowUpPages(
   events: ScrapedEvent[],
   pageUrl: URL,
-  onProgress?: (progress: FollowUpProgress, events: ScrapedEvent[]) => void
-): Promise<ScrapedEvent[]> {
+  options?: FollowUpScrapeOptions
+): Promise<ScrapeResult> {
   const grouped = new Map<string, ScrapedEvent[]>();
   const rest: ScrapedEvent[] = [];
+  const doneIds = new Set(
+    (options?.groups ?? [])
+      .filter((group) => group.status === "done")
+      .map((group) => group.id)
+  );
 
   for (const event of events) {
     const listedId = followUpGroupId(event);
     if (!listedId) {
-      rest.push(withHeaderImage(event));
+      rest.push(event);
+      continue;
+    }
+    if (doneIds.has(listedId)) {
+      rest.push(event);
       continue;
     }
     const bucket = grouped.get(listedId) ?? [];
@@ -178,28 +196,43 @@ async function expandFollowUpPages(
     grouped.set(listedId, bucket);
   }
 
-  let current = sortEvents(
-    dedupeEvents([...rest, ...[...grouped.values()].flat()])
-  ).map(withDisplayFields);
-  let groups: FollowUpGroup[] = listFollowUpGroups(events);
+  let current = sortEvents(dedupeEvents([...rest, ...[...grouped.values()].flat()])).map(
+    withDisplayFields
+  );
+  let groups: FollowUpGroup[] =
+    options?.groups && options.groups.length > 0
+      ? options.groups.map((group) =>
+          group.status === "paused" || group.status === "error"
+            ? { ...group, status: "pending" as const }
+            : group
+        )
+      : listFollowUpGroups(events);
 
   const emit = (running: boolean) => {
-    onProgress?.(followUpProgressOf(groups, current, running), current);
+    options?.onProgress?.(followUpProgressOf(groups, current, running), current);
   };
 
-  emit(groups.length > 0);
+  emit(groups.some((group) => group.status !== "done"));
 
   if (grouped.size === 0) {
     emit(false);
-    return current;
+    return { events: current, warning: null };
   }
 
   const limit = createLimiter(FOLLOW_UP_CONCURRENCY);
   await Promise.all(
     [...grouped.entries()].map(([groupId, originals]) =>
       limit(async () => {
+        if (options?.signal?.aborted) {
+          groups = groups.map((group) =>
+            group.id === groupId && group.status === "pending"
+              ? { ...group, status: "paused" as const }
+              : group
+          );
+          return;
+        }
         groups = groups.map((group) =>
-          group.id === groupId ? { ...group, status: "running" } : group
+          group.id === groupId ? { ...group, status: "running" as const } : group
         );
         emit(true);
         try {
@@ -208,26 +241,37 @@ async function expandFollowUpPages(
             groupId,
             pageUrl
           );
+          if (options?.signal?.aborted && next.length === 0) {
+            groups = groups.map((group) =>
+              group.id === groupId ? { ...group, status: "paused" } : group
+            );
+            return;
+          }
           current = replaceGroupEvents(current, groupId, next);
           groups = groups.map((group) =>
             group.id === groupId
               ? {
                   ...group,
-                  status: "done",
+                  status: "done" as const,
                   eventCount: next.length,
                   error: null,
                 }
               : group
           );
         } catch (error) {
-          const fallback = originals.map((event) => withHeaderImage(event));
-          current = replaceGroupEvents(current, groupId, fallback);
+          if (options?.signal?.aborted) {
+            groups = groups.map((group) =>
+              group.id === groupId ? { ...group, status: "paused" } : group
+            );
+            return;
+          }
+          current = replaceGroupEvents(current, groupId, originals);
           groups = groups.map((group) =>
             group.id === groupId
               ? {
                   ...group,
-                  status: "error",
-                  eventCount: fallback.length,
+                  status: "error" as const,
+                  eventCount: originals.length,
                   error:
                     error instanceof Error
                       ? error.message
@@ -241,8 +285,15 @@ async function expandFollowUpPages(
     )
   );
 
+  const stopped = Boolean(options?.signal?.aborted);
+  if (stopped) {
+    groups = pauseFollowUpGroups(groups);
+  }
   emit(false);
-  return current;
+  return {
+    events: current,
+    warning: stopped ? "Unterseiten-Scraping wurde angehalten." : null,
+  };
 }
 
 async function scrapeOneFollowUpGroup(
@@ -254,46 +305,99 @@ async function scrapeOneFollowUpGroup(
     params.set("sort", "DateAsc");
     params.set("product_group_id", groupId);
   });
-  if (follow.events.length > 1) {
-    const header =
-      headerImageFrom(originals[0]?.heroImage) ?? originals[0]?.heroImage;
-    return follow.events.map((event) =>
-      withDisplayFields(
-        withHeaderImage(
-          {
-            ...event,
-            name: event.name || originals[0]?.name || event.name,
-            heroImage: header ?? event.heroImage,
-            productGroupId: groupId,
-          },
-          header
-        )
-      )
-    );
-  }
-  return originals.map((event) =>
-    withDisplayFields(withHeaderImage({ ...event, productGroupId: groupId }))
+  const source = follow.events.length > 1 ? follow.events : originals;
+  const artwork = await artworkImageForGroup(originals, source, pageUrl);
+  return source.map((event) =>
+    withDisplayFields({
+      ...event,
+      name: event.name || originals[0]?.name || event.name,
+      heroImage: artwork ?? event.heroImage,
+      productGroupId: groupId,
+    })
   );
 }
 
-function withHeaderImage(
-  event: ScrapedEvent,
-  header?: string | null
-): ScrapedEvent {
-  const next = header ?? headerImageFrom(event.heroImage) ?? event.heroImage;
-  return next === event.heroImage ? event : { ...event, heroImage: next };
+async function artworkImageForGroup(
+  originals: ScrapedEvent[],
+  followEvents: ScrapedEvent[],
+  pageUrl: URL
+): Promise<string | null> {
+  const urls = await artworkPageUrls(originals, followEvents, pageUrl);
+  for (const url of urls) {
+    const html = await fetchHtml(url);
+    if (!html) continue;
+    const image = artworkContentImage(html, url);
+    if (image) return image;
+  }
+  return null;
 }
 
-function headerImageFrom(listing: string | null): string | null {
-  if (!listing) return null;
-  if (!/\/teaser\/\d+x\d+\//i.test(listing)) return null;
-  let next = listing.replace(/\/teaser\/\d+x\d+\//i, "/teaser/artworks/");
-  if (/-tickets-\d+\.(jpe?g|png|webp)$/i.test(next)) {
-    next = next.replace(/-tickets-\d+\.(jpe?g|png|webp)$/i, "-tickets-header.$1");
-  } else {
-    next = next.replace(/-\d{4}\.(jpe?g|png|webp)$/i, "-header.$1");
+async function artworkPageUrls(
+  originals: ScrapedEvent[],
+  followEvents: ScrapedEvent[],
+  pageUrl: URL
+): Promise<string[]> {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string | null | undefined) => {
+    if (!value) return;
+    try {
+      const next = new URL(value, pageUrl.origin).toString();
+      if (seen.has(next)) return;
+      seen.add(next);
+      urls.push(next);
+    } catch {
+      // Ungültige URL ignorieren.
+    }
+  };
+
+  for (const event of [...originals, ...followEvents]) {
+    const link = event.ticketUrl ?? "";
+    if (/\/(artist|attraction|eventseries)\//i.test(link)) add(link);
   }
-  return next === listing ? null : next;
+  const groupId =
+    originals[0]?.productGroupId ?? followEvents[0]?.productGroupId;
+  if (groupId) add(`${pageUrl.origin}/eventseries/${groupId}/`);
+  add(followEvents[0]?.ticketUrl);
+  add(originals[0]?.ticketUrl);
+
+  const artist = await artistPageUrl(originals[0]?.name ?? "", pageUrl);
+  if (artist) urls.unshift(artist);
+  return urls;
+}
+
+async function artistPageUrl(
+  name: string,
+  pageUrl: URL
+): Promise<string | null> {
+  const term = name.replace(/\s+\d{4}$/, "").trim();
+  if (!term) return null;
+  try {
+    const tld = pageUrl.hostname.split(".").pop()?.toLowerCase() ?? "de";
+    const params = new URLSearchParams({
+      webId: WEB_IDS[tld] ?? WEB_IDS.de,
+      language: tld === "de" || tld === "at" || tld === "ch" ? "de" : "en",
+      search_term: term,
+      top: "8",
+    });
+    const payload = await fetchJson(ATTRACTIONS_URL, params, pageUrl);
+    const record = asRecord(payload);
+    const items = Array.isArray(record?.attractions) ? record.attractions : [];
+    const needle = term.toLowerCase();
+    let fallback: string | null = null;
+    for (const raw of items) {
+      const item = asRecord(raw);
+      if (!item) continue;
+      const title = (asString(item.name) ?? "").toLowerCase();
+      const link = absolute(linkOf(item), pageUrl.origin);
+      if (!link) continue;
+      if (title === needle) return link;
+      if (!fallback && title.includes(needle)) fallback = link;
+    }
+    return fallback;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchEventsFromHtml(pageUrl: URL): Promise<ScrapedEvent[]> {

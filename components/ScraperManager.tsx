@@ -19,6 +19,7 @@ export default function ScraperManager() {
   const [ready, setReady] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [followUpId, setFollowUpId] = useState<string | null>(null);
+  const followUpAbort = useRef<AbortController | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -168,21 +169,32 @@ export default function ScraperManager() {
   };
 
   const handleFollowUps = async (scraper: Scraper) => {
+    const controller = new AbortController();
+    followUpAbort.current = controller;
     setFollowUpId(scraper.id);
     try {
-      const next = await scrapeScraperFollowUps(scraper, (_progress, updated) => {
-        setScrapers((prev) =>
-          prev.map((item) => (item.id === updated.id ? updated : item))
-        );
-      });
+      const next = await scrapeScraperFollowUps(
+        scraper,
+        (_progress, updated) => {
+          setScrapers((prev) =>
+            prev.map((item) => (item.id === updated.id ? updated : item))
+          );
+        },
+        controller.signal
+      );
       if (next) {
         setScrapers((prev) =>
           prev.map((item) => (item.id === next.id ? next : item))
         );
       }
     } finally {
+      if (followUpAbort.current === controller) followUpAbort.current = null;
       setFollowUpId(null);
     }
+  };
+
+  const handleStopFollowUps = () => {
+    followUpAbort.current?.abort();
   };
 
   const confirmDelete = () => {
@@ -227,6 +239,7 @@ export default function ScraperManager() {
                 following={followUpId === scraper.id}
                 onRun={() => handleRun(scraper)}
                 onFollowUps={() => handleFollowUps(scraper)}
+                onStopFollowUps={handleStopFollowUps}
                 onDelete={() => setPendingDelete(scraper)}
               />
             ))}

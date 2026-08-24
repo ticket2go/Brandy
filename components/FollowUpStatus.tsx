@@ -4,9 +4,13 @@ import type { FollowUpGroup, FollowUpProgress } from "@/lib/follow-up";
 
 type FollowUpStatusProps = {
   progress: FollowUpProgress;
+  onStop?: () => void;
 };
 
-export default function FollowUpStatus({ progress }: FollowUpStatusProps) {
+export default function FollowUpStatus({
+  progress,
+  onStop,
+}: FollowUpStatusProps) {
   const percent =
     progress.total > 0
       ? Math.round((progress.done / progress.total) * 100)
@@ -17,7 +21,11 @@ export default function FollowUpStatus({ progress }: FollowUpStatusProps) {
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-medium text-black" aria-live="polite">
-            {progress.running ? "Unterseiten" : "Unterseiten fertig"}
+            {progress.running
+              ? "Unterseiten"
+              : progress.groups.some((group) => group.status === "paused")
+                ? "Angehalten"
+                : "Unterseiten fertig"}
             {": "}
             {progress.done} / {progress.total}
           </p>
@@ -27,7 +35,18 @@ export default function FollowUpStatus({ progress }: FollowUpStatusProps) {
               : `${progress.eventCount} Einträge bisher`}
           </p>
         </div>
-        <p className="text-xs text-black/40">{percent} %</p>
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-black/40">{percent} %</p>
+          {progress.running && onStop ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="rounded-full border border-black/15 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-black/5"
+            >
+              Anhalten
+            </button>
+          ) : null}
+        </div>
       </div>
       <div
         className="h-1.5 overflow-hidden rounded-full bg-black/10"
@@ -74,7 +93,9 @@ export function FollowUpBadge({
         ? "bg-black text-white"
         : group.status === "error"
           ? "bg-red-100 text-red-700"
-          : "bg-black/5 text-black/55";
+          : group.status === "paused"
+            ? "bg-amber-100 text-amber-900"
+            : "bg-black/5 text-black/55";
 
   const content = (
     <>
@@ -84,7 +105,9 @@ export function FollowUpBadge({
           ? "…"
           : group.status === "error"
             ? "!"
-            : count}
+            : group.status === "paused"
+              ? "❚❚"
+              : count}
       </span>
     </>
   );

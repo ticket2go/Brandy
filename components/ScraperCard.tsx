@@ -10,6 +10,7 @@ type ScraperCardProps = {
   following: boolean;
   onRun: () => void;
   onFollowUps: () => void;
+  onStopFollowUps?: () => void;
   onDelete: () => void;
 };
 
@@ -19,6 +20,7 @@ export default function ScraperCard({
   following,
   onRun,
   onFollowUps,
+  onStopFollowUps,
   onDelete,
 }: ScraperCardProps) {
   const busy = running || following;
@@ -30,6 +32,12 @@ export default function ScraperCard({
       ).length
     : 0;
   const followTotal = followUp?.groups.length ?? 0;
+  const canResume = followUp?.groups.some(
+    (group) =>
+      group.status === "paused" ||
+      group.status === "pending" ||
+      group.status === "error"
+  );
 
   return (
     <article className="flex w-full max-w-xl flex-col gap-4 rounded-2xl bg-black p-5 text-white">
@@ -69,16 +77,24 @@ export default function ScraperCard({
           >
             {running ? "Läuft …" : "Scrapen"}
           </button>
-          <button
-            type="button"
-            onClick={onFollowUps}
-            disabled={busy || !hasEntries}
-            className="rounded-full bg-white/15 px-4 py-2 text-[12px] font-semibold text-white transition enabled:hover:bg-white/25 disabled:opacity-40"
-          >
-            {following || followUp?.running
-              ? `${followDone}/${followTotal}`
-              : "Unterseiten Scrapen"}
-          </button>
+          {following ? (
+            <button
+              type="button"
+              onClick={onStopFollowUps}
+              className="rounded-full bg-white/15 px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-white/25"
+            >
+              Anhalten {followDone}/{followTotal}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onFollowUps}
+              disabled={busy || !hasEntries}
+              className="rounded-full bg-white/15 px-4 py-2 text-[12px] font-semibold text-white transition enabled:hover:bg-white/25 disabled:opacity-40"
+            >
+              {canResume ? "Weiter" : "Unterseiten Scrapen"}
+            </button>
+          )}
           <button
             type="button"
             onClick={onDelete}

@@ -130,11 +130,13 @@ export default function ScraperPreview({
                       ? "wird geladen …"
                       : group.status === "pending"
                         ? "wartet"
-                        : group.status === "error"
-                          ? group.error ?? "Fehler"
-                          : items.length === 1
-                            ? "1 Termin"
-                            : `${items.length} Termine`}
+                        : group.status === "paused"
+                          ? "angehalten"
+                          : group.status === "error"
+                            ? group.error ?? "Fehler"
+                            : items.length === 1
+                              ? "1 Termin"
+                              : `${items.length} Termine`}
                   </p>
                 </div>
                 {items.length > 0 ? (

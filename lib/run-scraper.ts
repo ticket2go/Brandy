@@ -5,9 +5,11 @@ import {
   scrapeEventimFollowUps,
 } from "@/lib/eventim-scraper";
 import {
+  canResumeFollowUp,
   eventsForGroup,
   followUpProgressOf,
   listFollowUpGroups,
+  pauseFollowUpGroups,
   replaceGroupEvents,
   type FollowUpGroup,
   type FollowUpProgress,
@@ -63,10 +65,15 @@ export async function runScraper(scraper: Scraper): Promise<Scraper | null> {
 
 export async function scrapeScraperFollowUps(
   scraper: Scraper,
-  onProgress?: (progress: FollowUpProgress, next: Scraper) => void
+  onProgress?: (progress: FollowUpProgress, next: Scraper) => void,
+  signal?: AbortSignal
 ): Promise<Scraper | null> {
   const source =
     scraper.preview.length > 0 ? scraper.preview : scraper.events;
+  const resumeGroups =
+    scraper.followUp?.groups && canResumeFollowUp(scraper.followUp.groups)
+      ? scraper.followUp.groups
+      : undefined;
 
   const persist = (
     events: ScrapedEvent[],
@@ -118,13 +125,26 @@ export async function scrapeScraperFollowUps(
 
   if (typeof window !== "undefined" && isEventimUrl(scraper.url)) {
     try {
-      const result = await scrapeEventimFollowUps(
-        source,
-        scraper.url,
-        (progress, events) => {
+      const result = await scrapeEventimFollowUps(source, scraper.url, {
+        signal,
+        groups: resumeGroups,
+        onProgress: (progress, events) => {
           emit(progress, events, null, null);
-        }
-      );
+        },
+      });
+      if (signal?.aborted) {
+        const latest = getScraper(scraper.id);
+        const groups = pauseFollowUpGroups(
+          latest?.followUp?.groups ?? resumeGroups ?? listFollowUpGroups(source)
+        );
+        return persist(
+          result.events.length > 0 ? result.events : source,
+          groups,
+          false,
+          result.warning ?? "Unterseiten-Scraping wurde angehalten.",
+          null
+        );
+      }
       if (result.events.length > 0) {
         const groups =
           getScraper(scraper.id)?.followUp?.groups ??
@@ -137,7 +157,9 @@ export async function scrapeScraperFollowUps(
       const server = await followUpsViaGroups(
         scraper.url,
         source,
-        emit
+        emit,
+        signal,
+        resumeGroups
       );
       if (server.events.length > 0) {
         return persist(
@@ -156,7 +178,25 @@ export async function scrapeScraperFollowUps(
         server.error
       );
     } catch (error) {
-      const server = await followUpsViaGroups(scraper.url, source, emit);
+      if (signal?.aborted) {
+        const latest = getScraper(scraper.id);
+        return persist(
+          latest?.preview?.length ? latest.preview : source,
+          pauseFollowUpGroups(
+            latest?.followUp?.groups ?? resumeGroups ?? listFollowUpGroups(source)
+          ),
+          false,
+          "Unterseiten-Scraping wurde angehalten.",
+          null
+        );
+      }
+      const server = await followUpsViaGroups(
+        scraper.url,
+        source,
+        emit,
+        signal,
+        resumeGroups
+      );
       if (server.events.length > 0) {
         return persist(
           server.events,
@@ -177,7 +217,13 @@ export async function scrapeScraperFollowUps(
     }
   }
 
-  const server = await followUpsViaGroups(scraper.url, source, emit);
+  const server = await followUpsViaGroups(
+    scraper.url,
+    source,
+    emit,
+    signal,
+    resumeGroups
+  );
   return persist(
     server.events,
     server.groups,
@@ -243,15 +289,25 @@ async function followUpsViaGroups(
     events: ScrapedEvent[],
     warning: string | null,
     error: string | null
-  ) => Scraper | null
+  ) => Scraper | null,
+  signal?: AbortSignal,
+  existing?: FollowUpGroup[]
 ): Promise<
   RunPayload & {
     groups: FollowUpGroup[];
   }
 > {
-  let groups = listFollowUpGroups(events);
+  let groups =
+    existing && existing.length > 0
+      ? existing.map((group) =>
+          group.status === "paused" || group.status === "error"
+            ? { ...group, status: "pending" as const }
+            : group
+        )
+      : listFollowUpGroups(events);
   let current = events;
-  if (groups.length === 0) {
+  const pending = groups.filter((group) => group.status !== "done");
+  if (pending.length === 0) {
     const all = await scrapeViaApi(url, { followUps: true, events });
     return { ...all, groups };
   }
@@ -260,15 +316,29 @@ async function followUpsViaGroups(
 
   const limit = createLimiter(FOLLOW_UP_CONCURRENCY);
   await Promise.all(
-    groups.map((group) =>
+    pending.map((group) =>
       limit(async () => {
+        if (signal?.aborted) {
+          groups = groups.map((item) =>
+            item.id === group.id && item.status === "pending"
+              ? { ...item, status: "paused" as const }
+              : item
+          );
+          return;
+        }
         groups = groups.map((item) =>
-          item.id === group.id ? { ...item, status: "running" } : item
+          item.id === group.id ? { ...item, status: "running" as const } : item
         );
         emit(followUpProgressOf(groups, current, true), current, null, null);
         const originals = eventsForGroup(events, group.id);
         try {
           const result = await scrapeGroupWithFallback(url, originals, group.id);
+          if (signal?.aborted) {
+            groups = groups.map((item) =>
+              item.id === group.id ? { ...item, status: "paused" as const } : item
+            );
+            return;
+          }
           if (result.events.length === 0 && result.error) {
             throw new Error(result.error);
           }
@@ -281,7 +351,7 @@ async function followUpsViaGroups(
             item.id === group.id
               ? {
                   ...item,
-                  status: "done",
+                  status: "done" as const,
                   eventCount:
                     result.events.length > 0
                       ? result.events.length
@@ -291,11 +361,17 @@ async function followUpsViaGroups(
               : item
           );
         } catch (error) {
+          if (signal?.aborted) {
+            groups = groups.map((item) =>
+              item.id === group.id ? { ...item, status: "paused" as const } : item
+            );
+            return;
+          }
           groups = groups.map((item) =>
             item.id === group.id
               ? {
                   ...item,
-                  status: "error",
+                  status: "error" as const,
                   error:
                     error instanceof Error
                       ? error.message
@@ -309,12 +385,15 @@ async function followUpsViaGroups(
     )
   );
 
+  const stopped = Boolean(signal?.aborted);
+  if (stopped) groups = pauseFollowUpGroups(groups);
   const failed = groups.filter((group) => group.status === "error").length;
   return {
     events: current,
     groups,
-    warning:
-      failed > 0
+    warning: stopped
+      ? "Unterseiten-Scraping wurde angehalten."
+      : failed > 0
         ? `${failed} Unterseite${failed === 1 ? "" : "n"} konnten nicht geladen werden.`
         : null,
     error: current.length > 0 ? null : "Scraping fehlgeschlagen.",
