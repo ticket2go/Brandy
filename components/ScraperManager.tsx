@@ -7,11 +7,13 @@ import ScraperCard from "./ScraperCard";
 import { runScraper, scrapeScraperFollowUps, updateScraperEntries } from "@/lib/run-scraper";
 import type { SearchProgress } from "@/lib/search-progress";
 import {
+  addScraper,
   getScraper,
+  hydrateScrapers,
   loadScrapers,
   newScraper,
   normalizeUrl,
-  saveScrapers,
+  removeScraper,
   updateScraper,
   type Scraper,
 } from "@/lib/scrapers";
@@ -37,25 +39,34 @@ export default function ScraperManager() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const sync = () => {
       const loaded = loadScrapers().map((item) => {
         if (!item.followUp?.running) return item;
         return (
-          updateScraper(item.id, {
-            followUp: { ...item.followUp, running: false },
-          }) ?? item
+          updateScraper(
+            item.id,
+            {
+              followUp: { ...item.followUp, running: false },
+            },
+            { persistEvents: false }
+          ) ?? item
         );
       });
+      if (cancelled) return;
       setScrapers(loaded);
       setReady(true);
     };
-    sync();
+    void hydrateScrapers().then(() => {
+      if (!cancelled) sync();
+    });
     const handleVisible = () => {
       if (document.visibilityState === "visible") sync();
     };
     window.addEventListener("focus", sync);
     document.addEventListener("visibilitychange", handleVisible);
     return () => {
+      cancelled = true;
       window.removeEventListener("focus", sync);
       document.removeEventListener("visibilitychange", handleVisible);
     };
@@ -154,9 +165,9 @@ export default function ScraperManager() {
       setError("Bitte eine gültige URL angeben.");
       return;
     }
-    const nextList = [...scrapers, newScraper(trimmedName, normalizedUrl)];
-    setScrapers(nextList);
-    saveScrapers(nextList);
+    const created = newScraper(trimmedName, normalizedUrl);
+    setScrapers((prev) => [...prev, created]);
+    void addScraper(created);
     closeForm();
   };
 
@@ -257,10 +268,10 @@ export default function ScraperManager() {
 
   const confirmDelete = () => {
     if (!pendingDelete) return;
-    const nextList = scrapers.filter((item) => item.id !== pendingDelete.id);
-    setScrapers(nextList);
-    saveScrapers(nextList);
+    const id = pendingDelete.id;
+    setScrapers((prev) => prev.filter((item) => item.id !== id));
     setPendingDelete(null);
+    void removeScraper(id);
   };
 
   const canSave = name.trim().length > 0 && url.trim().length > 0;

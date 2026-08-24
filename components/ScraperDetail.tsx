@@ -19,7 +19,12 @@ import {
   scrapeScraperFollowUps,
   updateScraperEntries,
 } from "@/lib/run-scraper";
-import { getScraper, updateScraper, type Scraper } from "@/lib/scrapers";
+import {
+  getScraper,
+  hydrateScrapers,
+  updateScraper,
+  type Scraper,
+} from "@/lib/scrapers";
 
 type ScraperDetailProps = {
   id: string;
@@ -38,16 +43,28 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
   const stopFollowUps = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    const current = getScraper(id);
-    if (current?.followUp?.running) {
-      const next = updateScraper(id, {
-        followUp: { ...current.followUp, running: false },
-      });
-      setScraper(next);
-    } else {
-      setScraper(current);
-    }
-    setReady(true);
+    let cancelled = false;
+    void hydrateScrapers().then(() => {
+      if (cancelled) return;
+      const current = getScraper(id);
+      if (current?.followUp?.running) {
+        setScraper(
+          updateScraper(
+            id,
+            {
+              followUp: { ...current.followUp, running: false },
+            },
+            { persistEvents: false }
+          )
+        );
+      } else {
+        setScraper(current);
+      }
+      setReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   useEffect(() => {
@@ -160,7 +177,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             Scraper nicht gefunden
           </h1>
           <p className="text-sm text-black/60">
-            Dieser Scraper existiert in diesem Browser nicht (mehr).
+            Dieser Scraper existiert nicht (mehr).
           </p>
           <Link
             href="/eventscraper"

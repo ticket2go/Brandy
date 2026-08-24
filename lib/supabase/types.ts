@@ -459,6 +459,119 @@ export interface Database {
         };
         Relationships: [];
       };
+      scrapers: {
+        Row: {
+          id: string;
+          name: string;
+          url: string;
+          entry_count: number;
+          last_run_at: string | null;
+          error: string | null;
+          warning: string | null;
+          follow_up: Json | null;
+          last_update: Json | null;
+          selection: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          url: string;
+          entry_count?: number;
+          last_run_at?: string | null;
+          error?: string | null;
+          warning?: string | null;
+          follow_up?: Json | null;
+          last_update?: Json | null;
+          selection?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          url?: string;
+          entry_count?: number;
+          last_run_at?: string | null;
+          error?: string | null;
+          warning?: string | null;
+          follow_up?: Json | null;
+          last_update?: Json | null;
+          selection?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      scraper_events: {
+        Row: {
+          id: string;
+          scraper_id: string;
+          event_key: string;
+          name: string;
+          venue: string | null;
+          city: string | null;
+          location: string | null;
+          date: string | null;
+          time: string | null;
+          starts_at: string | null;
+          hero_image: string | null;
+          ticket_url: string | null;
+          price: string | null;
+          product_group_id: string | null;
+          position: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          scraper_id: string;
+          event_key: string;
+          name: string;
+          venue?: string | null;
+          city?: string | null;
+          location?: string | null;
+          date?: string | null;
+          time?: string | null;
+          starts_at?: string | null;
+          hero_image?: string | null;
+          ticket_url?: string | null;
+          price?: string | null;
+          product_group_id?: string | null;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          scraper_id?: string;
+          event_key?: string;
+          name?: string;
+          venue?: string | null;
+          city?: string | null;
+          location?: string | null;
+          date?: string | null;
+          time?: string | null;
+          starts_at?: string | null;
+          hero_image?: string | null;
+          ticket_url?: string | null;
+          price?: string | null;
+          product_group_id?: string | null;
+          position?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "scraper_events_scraper_id_fkey";
+            columns: ["scraper_id"];
+            isOneToOne: false;
+            referencedRelation: "scrapers";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

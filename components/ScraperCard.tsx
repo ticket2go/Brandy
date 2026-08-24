@@ -32,7 +32,10 @@ export default function ScraperCard({
   searchProgress = null,
 }: ScraperCardProps) {
   const busy = running || following || updating;
-  const hasEntries = scraper.preview.length > 0 || scraper.events.length > 0;
+  const hasEntries =
+    scraper.entryCount > 0 ||
+    scraper.preview.length > 0 ||
+    scraper.events.length > 0;
   const followUp = scraper.followUp;
   const followDone = followUp
     ? followUp.groups.filter(

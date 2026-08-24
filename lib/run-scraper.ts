@@ -19,6 +19,7 @@ import { diffEvents } from "@/lib/event-diff";
 import type { ScrapedEvent } from "@/lib/scraped-event";
 import {
   applySelection,
+  flushScrapers,
   getScraper,
   selectionForRerun,
   updateScraper,
@@ -54,14 +55,20 @@ export async function loadScraperPreview(
     }
   });
   const firstLoad = scraper.preview.length === 0;
-  return updateScraper(scraper.id, {
-    preview: result.events,
-    ...(firstLoad ? { events: [], entryCount: 0 } : {}),
-    lastRunAt: new Date().toISOString(),
-    error: result.events.length > 0 ? null : result.error,
-    warning: result.warning,
-    followUp: null,
-  });
+  const next = updateScraper(
+    scraper.id,
+    {
+      preview: result.events,
+      ...(firstLoad ? { events: [], entryCount: 0 } : {}),
+      lastRunAt: new Date().toISOString(),
+      error: result.events.length > 0 ? null : result.error,
+      warning: result.warning,
+      followUp: null,
+    },
+    { persistEvents: result.events.length > 0 }
+  );
+  await flushScrapers();
+  return next;
 }
 
 export async function runScraper(
@@ -76,16 +83,22 @@ export async function runScraper(
   });
   const selection = selectionForRerun(scraper.selection);
   const events = applySelection(result.events, selection);
-  return updateScraper(scraper.id, {
-    preview: result.events,
-    selection,
-    events,
-    entryCount: events.length,
-    lastRunAt: new Date().toISOString(),
-    error: result.events.length > 0 ? null : result.error,
-    warning: result.warning,
-    followUp: null,
-  });
+  const next = updateScraper(
+    scraper.id,
+    {
+      preview: result.events,
+      selection,
+      events,
+      entryCount: events.length,
+      lastRunAt: new Date().toISOString(),
+      error: result.events.length > 0 ? null : result.error,
+      warning: result.warning,
+      followUp: null,
+    },
+    { persistEvents: result.events.length > 0 }
+  );
+  await flushScrapers();
+  return next;
 }
 
 export async function updateScraperEntries(
@@ -103,11 +116,13 @@ export async function updateScraperEntries(
     }
   });
   if (search.events.length === 0) {
-    return updateScraper(scraper.id, {
+    const failed = updateScraper(scraper.id, {
       lastRunAt: new Date().toISOString(),
       error: search.error ?? "Beim Update wurden keine Einträge gefunden.",
       warning: search.warning,
     });
+    await flushScrapers();
+    return failed;
   }
 
   const expand = Boolean(
@@ -131,32 +146,44 @@ export async function updateScraperEntries(
     if (expanded) {
       nextEvents = expanded.preview;
       const stats = diffEvents(previous, nextEvents);
-      return updateScraper(expanded.id, {
-        preview: nextEvents,
-        events: nextEvents,
-        entryCount: nextEvents.length,
-        lastRunAt: new Date().toISOString(),
-        error: null,
-        warning: expanded.warning,
-        lastUpdate: stats,
-        followUp: expanded.followUp
-          ? { ...expanded.followUp, running: false }
-          : null,
-      });
+      const saved = updateScraper(
+        expanded.id,
+        {
+          preview: nextEvents,
+          events: nextEvents,
+          entryCount: nextEvents.length,
+          lastRunAt: new Date().toISOString(),
+          error: null,
+          warning: expanded.warning,
+          lastUpdate: stats,
+          followUp: expanded.followUp
+            ? { ...expanded.followUp, running: false }
+            : null,
+        },
+        { persistEvents: true }
+      );
+      await flushScrapers();
+      return saved;
     }
   }
 
   const stats = diffEvents(previous, nextEvents);
-  return updateScraper(scraper.id, {
-    preview: nextEvents,
-    events: nextEvents,
-    entryCount: nextEvents.length,
-    lastRunAt: new Date().toISOString(),
-    error: null,
-    warning: search.warning,
-    followUp: expand ? scraper.followUp : null,
-    lastUpdate: stats,
-  });
+  const saved = updateScraper(
+    scraper.id,
+    {
+      preview: nextEvents,
+      events: nextEvents,
+      entryCount: nextEvents.length,
+      lastRunAt: new Date().toISOString(),
+      error: null,
+      warning: search.warning,
+      followUp: expand ? scraper.followUp : null,
+      lastUpdate: stats,
+    },
+    { persistEvents: true }
+  );
+  await flushScrapers();
+  return saved;
 }
 
 export async function scrapeScraperFollowUps(
@@ -184,24 +211,30 @@ export async function scrapeScraperFollowUps(
       itemIds: [],
     };
     const selected = running ? [] : applySelection(events, selection);
+    const previous = getScraper(scraper.id);
+    const grew = events.length !== (previous?.preview.length ?? 0);
     try {
-      return updateScraper(scraper.id, {
-        preview: events,
-        selection,
-        ...(running
-          ? { entryCount: events.length }
-          : { events: selected, entryCount: selected.length }),
-        lastRunAt: new Date().toISOString(),
-        error: events.length > 0 ? null : error,
-        warning,
-        followUp:
-          groups.length > 0
-            ? {
-                running,
-                groups,
-              }
-            : null,
-      });
+      return updateScraper(
+        scraper.id,
+        {
+          preview: events,
+          selection,
+          ...(running
+            ? { entryCount: events.length }
+            : { events: selected, entryCount: selected.length }),
+          lastRunAt: new Date().toISOString(),
+          error: events.length > 0 ? null : error,
+          warning,
+          followUp:
+            groups.length > 0
+              ? {
+                  running,
+                  groups,
+                }
+              : null,
+        },
+        { persistEvents: !running || grew }
+      );
     } catch {
       return {
         ...scraper,
@@ -240,7 +273,8 @@ export async function scrapeScraperFollowUps(
     return next;
   };
 
-  if (typeof window !== "undefined" && isEventimUrl(scraper.url)) {
+  try {
+    if (typeof window !== "undefined" && isEventimUrl(scraper.url)) {
     try {
       const result = await scrapeEventimFollowUps(source, scraper.url, {
         signal,
@@ -360,6 +394,9 @@ export async function scrapeScraperFollowUps(
     server.warning,
     server.error
   );
+  } finally {
+    await flushScrapers();
+  }
 }
 
 export function applyScraperSelection(
@@ -383,10 +420,14 @@ export function applyScraperSelection(
 function persistSearchPreview(id: string, events?: ScrapedEvent[]) {
   if (!events || events.length === 0) return;
   try {
-    updateScraper(id, {
-      preview: events,
-      entryCount: events.length,
-    });
+    updateScraper(
+      id,
+      {
+        preview: events,
+        entryCount: events.length,
+      },
+      { persistEvents: true }
+    );
   } catch {
     // Zwischenstand ist optional, der Lauf geht weiter.
   }
