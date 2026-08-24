@@ -6,6 +6,7 @@ export type ScraperIngest = {
   accepted: number;
   rejected: number;
   skipped: number;
+  withImage: number;
   batches: string[];
   error: string | null;
   rejectedItems: Array<{ name: string; reason: string }>;
@@ -70,6 +71,7 @@ export async function ingestToGethyped(
     accepted: 0,
     rejected: 0,
     skipped: 0,
+    withImage: 0,
     batches: [],
     error: payload.error ?? "Senden an GetHyped ist fehlgeschlagen.",
     rejectedItems: [],
@@ -89,6 +91,7 @@ export function normalizeIngest(value: unknown): ScraperIngest | null {
     accepted: num(row.accepted),
     rejected: num(row.rejected),
     skipped: num(row.skipped),
+    withImage: num(row.withImage),
     batches: Array.isArray(row.batches)
       ? row.batches.filter((item): item is string => typeof item === "string")
       : [],

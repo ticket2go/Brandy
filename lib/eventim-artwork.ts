@@ -206,7 +206,7 @@ function jobKey(event: {
   return `name:${(event.name ?? "").trim().toLowerCase()}`;
 }
 
-function rewriteListingToArtwork(listing: string | null): string | null {
+export function rewriteListingToArtwork(listing: string | null): string | null {
   if (!listing || !/\/teaser\/\d+x\d+\//i.test(listing)) return null;
   const artworks = listing.replace(/\/teaser\/\d+x\d+\//i, "/teaser/artworks/");
   const header = artworks.replace(
@@ -215,6 +215,32 @@ function rewriteListingToArtwork(listing: string | null): string | null {
   );
   if (header !== artworks) return header;
   return artworks.replace(/-\d{4}\.(jpe?g|png|webp)$/i, "-header.$1");
+}
+
+/** Größtes öffentlich prüfbares Eventim-Bild, sonst das Listenbild. */
+export function publishHeroCandidates(listing: string | null): string[] {
+  if (!listing) return [];
+  const out: string[] = [];
+  const add = (value: string | null | undefined) => {
+    if (!value || out.includes(value)) return;
+    out.push(value);
+  };
+  add(rewriteListingToArtwork(listing));
+  for (const url of listingSizeVariants(listing)) add(url);
+  add(withoutListingThumb(listing));
+  add(listing);
+  return out;
+}
+
+export async function upgradeHeroForPublish(
+  listing: string | null
+): Promise<string | null> {
+  if (!listing) return null;
+  if (!isListingThumb(listing) && !/\/teaser\/\d+x\d+\//i.test(listing)) {
+    return listing;
+  }
+  const found = await firstExisting(publishHeroCandidates(listing));
+  return found ?? listing;
 }
 
 function rewriteListingToTeasers(listing: string | null): string[] {

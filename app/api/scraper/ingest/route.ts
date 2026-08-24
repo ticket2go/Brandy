@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { prepareGethypedImages } from "@/lib/gethyped-images";
 import {
   chunkEvents,
   mapScrapedEvents,
@@ -46,26 +47,28 @@ export async function POST(request: Request) {
   }
 
   const mapped = mapScrapedEvents(events);
+  const prepared = await prepareGethypedImages(mapped.accepted);
   const result: ScraperIngest = {
     at: new Date().toISOString(),
-    sent: mapped.accepted.length,
+    sent: prepared.events.length,
     accepted: 0,
     rejected: 0,
     skipped: mapped.skipped.length,
+    withImage: prepared.withImage,
     batches: [],
     error: null,
     rejectedItems: [],
     skippedItems: mapped.skipped.slice(0, 40),
   };
 
-  if (mapped.accepted.length === 0) {
+  if (prepared.events.length === 0) {
     result.error = "Kein Event erfüllt die GetHyped-Regeln.";
     return NextResponse.json(result, { status: 422 });
   }
 
   const base = ingestBase();
   const runId = newId();
-  const chunks = chunkEvents(mapped.accepted, MAX_EVENTS, MAX_BYTES);
+  const chunks = chunkEvents(prepared.events, MAX_EVENTS, MAX_BYTES);
 
   try {
     for (const [index, chunk] of chunks.entries()) {

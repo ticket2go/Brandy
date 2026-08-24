@@ -22,6 +22,11 @@ export default function IngestStatus({ ingest }: { ingest: ScraperIngest }) {
       ) : (
         <p className="text-xs text-black/40">
           {ingest.sent} Events gesendet
+          {ingest.withImage > 0
+            ? ` · ${ingest.withImage} mit Bild`
+            : ingest.sent > 0
+              ? " · keine Bilder mitgeliefert"
+              : ""}
           {ingest.batches[0] ? ` · ${ingest.batches[0]}` : ""}
           {` · ${new Date(ingest.at).toLocaleString("de-DE")}`}
         </p>

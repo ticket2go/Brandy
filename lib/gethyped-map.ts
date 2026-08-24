@@ -204,6 +204,7 @@ export function parsePrice(value: string | null): number | null {
 
 function compactRaw(event: ScrapedEvent): Record<string, unknown> {
   return {
+    heroImage: event.heroImage,
     ticketUrl: event.ticketUrl,
     productGroupId: event.productGroupId ?? null,
     city: event.city,

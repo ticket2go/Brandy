@@ -195,6 +195,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             accepted: 0,
             rejected: 0,
             skipped: 0,
+            withImage: 0,
             batches: [],
             error:
               error instanceof Error
