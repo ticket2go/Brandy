@@ -2,6 +2,19 @@ import { pageHeroImage } from "@/lib/eventim-parse";
 
 const ARTWORKS = "/obj/media/DE-eventim/teaser/artworks";
 const TEASER_SIZES = ["1920x600", "1140x400", "800x450", "640x360"];
+const MAM_SIZES = [
+  "1920x1080",
+  "1600x900",
+  "1280x720",
+  "1200x630",
+  "1140x400",
+  "1024x768",
+  "800x600",
+  "800x450",
+  "640x360",
+  "600x600",
+  "400x400",
+];
 const MAX_CANDIDATES = 24;
 const heroCache = new Map<string, string | null>();
 const pageHeroCache = new Map<string, string | null>();
@@ -30,6 +43,36 @@ type HeroExtra = {
   fetchPage?: boolean;
   quick?: boolean;
 };
+
+/** Größere Varianten derselben Listen-Datei, ohne 222er. */
+export function listingSizeVariants(listing: string | null): string[] {
+  if (!listing) return [];
+  const out: string[] = [];
+  const add = (value: string | null | undefined) => {
+    if (!value || value === listing || isListingThumb(value) || out.includes(value)) {
+      return;
+    }
+    out.push(value);
+  };
+
+  if (/\/teaser\/\d+x\d+\//i.test(listing)) {
+    for (const size of TEASER_SIZES) {
+      add(listing.replace(/\/teaser\/\d+x\d+\//i, `/teaser/${size}/`));
+    }
+  }
+
+  const mam = listing.match(/^(.*)(_222x222)(\.(?:jpe?g|png|webp))$/i);
+  if (mam) {
+    add(`${mam[1]}${mam[3]}`);
+    add(`${mam[1]}_header${mam[3]}`);
+    add(`${mam[1]}_orig${mam[3]}`);
+    for (const size of MAM_SIZES) {
+      add(`${mam[1]}_${size}${mam[3]}`);
+    }
+  }
+
+  return out;
+}
 
 export function heroImageCandidates(
   listing: string | null,
@@ -81,25 +124,30 @@ export async function resolveHeroImage(
   const cacheKey = `${listing ?? ""}|${extra?.name ?? ""}|${extra?.ticketUrl ?? ""}|${extra?.fetchPage !== false}|${extra?.quick === true}`;
   if (heroCache.has(cacheKey)) return heroCache.get(cacheKey) ?? null;
 
-  const canRewrite = Boolean(listing && /\/teaser\/\d+x\d+\//i.test(listing));
-  let found: string | null = null;
-  if (canRewrite || extra?.quick !== true) {
-    const candidates = heroImageCandidates(listing, extra);
-    const batchSize = 6;
-    for (let index = 0; index < candidates.length && !found; index += batchSize) {
-      const batch = candidates.slice(index, index + batchSize);
-      const hits = await Promise.all(batch.map((url) => imageExists(url)));
-      const hit = hits.findIndex(Boolean);
-      if (hit >= 0) found = batch[hit] ?? null;
-    }
+  let found = await firstExisting(listingSizeVariants(listing));
+  if (!found) {
+    found = await firstExisting(heroImageCandidates(listing, extra));
   }
 
   if (!found && extra?.fetchPage !== false) {
     found = await fetchEventPageHero(extra?.ticketUrl ?? null);
   }
 
+  if (!found && listing) found = listing;
+
   heroCache.set(cacheKey, found);
   return found;
+}
+
+async function firstExisting(urls: string[]): Promise<string | null> {
+  const batchSize = 6;
+  for (let index = 0; index < urls.length; index += batchSize) {
+    const batch = urls.slice(index, index + batchSize);
+    const hits = await Promise.all(batch.map((url) => imageExists(url)));
+    const hit = hits.findIndex(Boolean);
+    if (hit >= 0) return batch[hit] ?? null;
+  }
+  return null;
 }
 
 export async function applyHeroImages(
@@ -144,9 +192,7 @@ export async function applyHeroImages(
   }
 
   for (const event of events) {
-    event.heroImage =
-      resolved.get(jobKey(event)) ??
-      withoutListingThumb(event.heroImage);
+    event.heroImage = resolved.get(jobKey(event)) ?? event.heroImage;
   }
 }
 

@@ -2,7 +2,6 @@ import {
   applyHeroImages,
   isListingThumb,
   resolveHeroImage,
-  withoutListingThumb,
 } from "@/lib/eventim-artwork";
 import { absolute, parseEventimPage } from "@/lib/eventim-parse";
 import {
@@ -626,7 +625,7 @@ function priceOf(product: Record<string, unknown>): string | null {
 function withDisplayFields(event: ScrapedEvent): ScrapedEvent {
   return {
     ...event,
-    heroImage: withoutListingThumb(event.heroImage),
+    heroImage: event.heroImage,
     date: formatDate(event.startsAt),
     time: formatTime(event.startsAt),
     location: event.location ?? combineLocation(event.venue, event.city),

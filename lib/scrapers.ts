@@ -1,5 +1,4 @@
 import type { ScraperUpdate } from "@/lib/event-diff";
-import { withoutListingThumb } from "@/lib/eventim-artwork";
 import {
   isFollowUpGroup,
   type FollowUpGroup,
@@ -175,7 +174,7 @@ function pickFields(event: ScrapedEvent, fields: ScraperField[]): ScrapedEvent {
     date: keep.has("date") ? event.date : null,
     time: keep.has("time") ? event.time : null,
     startsAt: event.startsAt,
-    heroImage: keep.has("heroImage") ? withoutListingThumb(event.heroImage) : null,
+    heroImage: keep.has("heroImage") ? event.heroImage : null,
     ticketUrl: keep.has("ticketUrl") ? event.ticketUrl : null,
     price: keep.has("price") ? event.price : null,
     productGroupId: event.productGroupId,
@@ -267,10 +266,7 @@ function isScraper(value: unknown): value is Scraper {
 }
 
 function withoutStoredThumb(event: ScrapedEvent): ScrapedEvent {
-  return {
-    ...event,
-    heroImage: withoutListingThumb(event.heroImage),
-  };
+  return event;
 }
 
 function isEvent(value: unknown): value is ScrapedEvent {
