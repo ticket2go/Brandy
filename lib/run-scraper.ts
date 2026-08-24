@@ -21,7 +21,8 @@ export async function loadScraperPreview(scraper: Scraper): Promise<Scraper | nu
     preview: result.events,
     ...(firstLoad ? { events: [], entryCount: 0 } : {}),
     lastRunAt: new Date().toISOString(),
-    error: result.events.length > 0 ? null : result.error ?? result.warning,
+    error: result.events.length > 0 ? null : result.error,
+    warning: result.warning,
   });
 }
 
@@ -35,7 +36,8 @@ export async function runScraper(scraper: Scraper): Promise<Scraper | null> {
     events,
     entryCount: events.length,
     lastRunAt: new Date().toISOString(),
-    error: result.events.length > 0 ? null : result.error ?? result.warning,
+    error: result.events.length > 0 ? null : result.error,
+    warning: result.warning,
   });
 }
 

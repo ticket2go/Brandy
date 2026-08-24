@@ -24,6 +24,7 @@ export type Scraper = {
   entryCount: number;
   lastRunAt: string | null;
   error: string | null;
+  warning: string | null;
 };
 
 const STORAGE_KEY = "eventscraper.scrapers";
@@ -49,6 +50,7 @@ export function newScraper(name: string, url: string): Scraper {
     entryCount: 0,
     lastRunAt: null,
     error: null,
+    warning: null,
   };
 }
 
@@ -156,6 +158,7 @@ function withDefaults(row: Scraper): Scraper {
     entryCount: typeof row.entryCount === "number" ? row.entryCount : events.length,
     lastRunAt: row.lastRunAt ?? null,
     error: typeof row.error === "string" ? row.error : null,
+    warning: typeof row.warning === "string" ? row.warning : null,
   };
 }
 

@@ -25,7 +25,6 @@ const WEB_IDS: Record<string, string> = {
 
 const REQUEST_TIMEOUT_MS = 9000;
 const PAGE_SIZE = 50;
-const MAX_PAGES = 20;
 
 export function isEventimUrl(rawUrl: string): boolean {
   try {
@@ -38,10 +37,13 @@ export function isEventimUrl(rawUrl: string): boolean {
 export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
   const pageUrl = new URL(rawUrl);
   let events: ScrapedEvent[] = [];
+  let totalResults: number | null = null;
   let searchError: Error | null = null;
 
   try {
-    events = await fetchPageEvents(pageUrl);
+    const page = await fetchPageEvents(pageUrl);
+    events = page.events;
+    totalResults = page.totalResults;
   } catch (error) {
     searchError = error instanceof Error ? error : new Error(String(error));
   }
@@ -58,28 +60,48 @@ export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
     };
   }
 
+  const unique = sortEvents(dedupeEvents(events)).map(withDisplayFields);
   return {
-    events: sortEvents(dedupeEvents(events)).map(withDisplayFields),
-    warning: null,
+    events: unique,
+    warning:
+      totalResults != null && totalResults > unique.length
+        ? `Die Preview zeigt die ersten ${unique.length} von ${totalResults} Einträgen der Seite.`
+        : null,
   };
 }
 
-async function fetchPageEvents(pageUrl: URL): Promise<ScrapedEvent[]> {
+async function fetchPageEvents(
+  pageUrl: URL
+): Promise<{ events: ScrapedEvent[]; totalResults: number | null }> {
   const groupId = productGroupIdFromLink(pageUrl.toString());
   if (groupId) {
-    const grouped = await fetchProductGroupEvents(groupId, pageUrl);
-    if (grouped.length > 0) return grouped;
+    const keys = [
+      "product_group_id",
+      "product_group.product_group_id",
+      "productGroupId",
+    ];
+    for (const key of keys) {
+      try {
+        const grouped = await fetchProductList(pageUrl, (params) => {
+          params.set("sort", "DateAsc");
+          params.set(key, groupId);
+        });
+        if (grouped.events.length > 0) return grouped;
+      } catch {
+        continue;
+      }
+    }
   }
 
   const searchTerm = searchTermOf(pageUrl);
   if (searchTerm || cityOf(pageUrl) || isSearchPath(pageUrl)) {
-    return fetchProductPages(pageUrl, (params) => {
+    return fetchProductList(pageUrl, (params) => {
       params.set("sort", "Recommendation");
       if (searchTerm) params.set("search_term", searchTerm);
     });
   }
 
-  return [];
+  return { events: [], totalResults: null };
 }
 
 async function fetchEventsFromHtml(pageUrl: URL): Promise<ScrapedEvent[]> {
@@ -126,43 +148,20 @@ function productGroupIdFromLink(link: string): string | null {
   }
 }
 
-async function fetchProductGroupEvents(
-  groupId: string,
-  pageUrl: URL
-): Promise<ScrapedEvent[]> {
-  const keys = ["product_group_id", "product_group.product_group_id", "productGroupId"];
-  for (const key of keys) {
-    try {
-      const events = await fetchProductPages(pageUrl, (params) => {
-        params.set("sort", "DateAsc");
-        params.set(key, groupId);
-      });
-      if (events.length > 0) return events;
-    } catch {
-      continue;
-    }
-  }
-  return [];
-}
-
-async function fetchProductPages(
+async function fetchProductList(
   pageUrl: URL,
   apply: (params: URLSearchParams) => void
-): Promise<ScrapedEvent[]> {
-  const all: ScrapedEvent[] = [];
-  for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const params = baseParams(pageUrl);
-    params.set("page", String(page));
-    params.set("top", String(PAGE_SIZE));
-    apply(params);
-    const payload = await fetchJson(PRODUCTS_URL, params, pageUrl);
-    const events = eventsFromProducts(payload, pageUrl.origin);
-    all.push(...events);
-    const record = asRecord(payload);
-    const totalPages = asNumber(record?.totalPages) ?? page;
-    if (events.length === 0 || page >= totalPages) break;
-  }
-  return all;
+): Promise<{ events: ScrapedEvent[]; totalResults: number | null }> {
+  const params = baseParams(pageUrl);
+  params.set("page", "1");
+  params.set("top", String(PAGE_SIZE));
+  apply(params);
+  const payload = await fetchJson(PRODUCTS_URL, params, pageUrl);
+  const record = asRecord(payload);
+  return {
+    events: eventsFromProducts(payload, pageUrl.origin),
+    totalResults: asNumber(record?.totalResults),
+  };
 }
 
 function eventsFromProducts(payload: unknown, origin: string): ScrapedEvent[] {

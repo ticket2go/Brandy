@@ -164,6 +164,11 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             {scraper.error}
           </p>
         ) : null}
+        {scraper.warning && !loading ? (
+          <p className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-sm text-black/60">
+            {scraper.warning}
+          </p>
+        ) : null}
 
         {scraper.preview.length === 0 ? (
           <p className="text-sm text-black/50">
