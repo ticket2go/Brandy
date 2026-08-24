@@ -1,11 +1,37 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import FollowUpStatus from "@/components/FollowUpStatus";
+import IngestStatus from "@/components/IngestStatus";
+import ScraperPreview from "@/components/ScraperPreview";
+import SearchStatus from "@/components/SearchStatus";
 import Title from "@/components/Title";
-import { runScraper } from "@/lib/run-scraper";
-import { getScraper, type Scraper } from "@/lib/scrapers";
+import UpdateStatus from "@/components/UpdateStatus";
+import {
+  gethypedConfigured,
+  ingestToGethyped,
+  loadGethypedToken,
+  saveGethypedToken,
+} from "@/lib/gethyped-ingest";
+import { canResumeFollowUp, followUpProgressOf } from "@/lib/follow-up";
+import {
+  makeSearchProgress,
+  type SearchProgress,
+} from "@/lib/search-progress";
+import {
+  loadScraperPreview,
+  runScraper,
+  scrapeScraperFollowUps,
+  updateScraperEntries,
+} from "@/lib/run-scraper";
+import {
+  getScraper,
+  hydrateScrapers,
+  updateScraper,
+  type Scraper,
+} from "@/lib/scrapers";
 
 type ScraperDetailProps = {
   id: string;
@@ -14,21 +40,173 @@ type ScraperDetailProps = {
 export default function ScraperDetail({ id }: ScraperDetailProps) {
   const [scraper, setScraper] = useState<Scraper | null>(null);
   const [ready, setReady] = useState(false);
-  const [running, setRunning] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [following, setFollowing] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [ingesting, setIngesting] = useState(false);
+  const [token, setToken] = useState("");
+  const [tokenNeeded, setTokenNeeded] = useState(true);
+  const [searchProgress, setSearchProgress] = useState<SearchProgress | null>(
+    null
+  );
+  const autoLoad = useRef(false);
+  const stopFollowUps = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setScraper(getScraper(id));
-    setReady(true);
+    let cancelled = false;
+    void hydrateScrapers().then(() => {
+      if (cancelled) return;
+      const current = getScraper(id);
+      if (current?.followUp?.running) {
+        setScraper(
+          updateScraper(
+            id,
+            {
+              followUp: { ...current.followUp, running: false },
+            },
+            { persistEvents: false }
+          )
+        );
+      } else {
+        setScraper(current);
+      }
+      setReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
-  const handleRun = async () => {
+  useEffect(() => {
+    setToken(loadGethypedToken());
+    void gethypedConfigured().then((configured) => {
+      setTokenNeeded(!configured);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!scraper || autoLoad.current) return;
+    if (scraper.preview.length > 0) return;
+    autoLoad.current = true;
+    void handleLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scraper]);
+
+  const persist = (next: Scraper | null) => {
+    if (!next) return;
+    setScraper(next);
+  };
+
+  const handleLoad = async () => {
     if (!scraper) return;
-    setRunning(true);
+    setLoading(true);
     try {
-      const next = await runScraper(scraper);
-      if (next) setScraper(next);
+      persist(
+        await loadScraperPreview(scraper, (progress, events) => {
+          setSearchProgress(progress);
+          if (events) persist(getScraper(id));
+        })
+      );
     } finally {
-      setRunning(false);
+      setSearchProgress(null);
+      setLoading(false);
+    }
+  };
+
+  const handleRerun = async () => {
+    if (!scraper) return;
+    setLoading(true);
+    try {
+      persist(
+        await runScraper(scraper, (progress, events) => {
+          setSearchProgress(progress);
+          if (events) persist(getScraper(id));
+        })
+      );
+    } finally {
+      setSearchProgress(null);
+      setLoading(false);
+    }
+  };
+
+  const handleFollowUps = async () => {
+    if (!scraper) return;
+    const controller = new AbortController();
+    stopFollowUps.current = controller;
+    setFollowing(true);
+    try {
+      persist(
+        await scrapeScraperFollowUps(
+          scraper,
+          (_progress, next) => persist(next),
+          controller.signal
+        )
+      );
+    } finally {
+      if (stopFollowUps.current === controller) stopFollowUps.current = null;
+      setFollowing(false);
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!scraper) return;
+    const controller = new AbortController();
+    stopFollowUps.current = controller;
+    setUpdating(true);
+    try {
+      persist(
+        await updateScraperEntries(
+          scraper,
+          (_progress, next) => persist(next),
+          controller.signal,
+          (progress, events) => {
+            setSearchProgress(progress);
+            if (events) persist(getScraper(id));
+          }
+        )
+      );
+    } finally {
+      if (stopFollowUps.current === controller) stopFollowUps.current = null;
+      setSearchProgress(null);
+      setUpdating(false);
+    }
+  };
+
+  const handleStopFollowUps = () => {
+    stopFollowUps.current?.abort();
+  };
+
+  const handleIngest = async () => {
+    if (!scraper) return;
+    const events =
+      scraper.preview.length > 0 ? scraper.preview : scraper.events;
+    if (events.length === 0) return;
+    saveGethypedToken(token);
+    setIngesting(true);
+    try {
+      const ingest = await ingestToGethyped(events, token);
+      persist(updateScraper(scraper.id, { lastIngest: ingest }));
+    } catch (error) {
+      persist(
+        updateScraper(scraper.id, {
+          lastIngest: {
+            at: new Date().toISOString(),
+            sent: 0,
+            accepted: 0,
+            rejected: 0,
+            skipped: 0,
+            batches: [],
+            error:
+              error instanceof Error
+                ? error.message
+                : "Senden an GetHyped ist fehlgeschlagen.",
+            rejectedItems: [],
+            skippedItems: [],
+          },
+        })
+      );
+    } finally {
+      setIngesting(false);
     }
   };
 
@@ -50,7 +228,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             Scraper nicht gefunden
           </h1>
           <p className="text-sm text-black/60">
-            Dieser Scraper existiert in diesem Browser nicht (mehr).
+            Dieser Scraper existiert nicht (mehr).
           </p>
           <Link
             href="/eventscraper"
@@ -62,6 +240,15 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
       </main>
     );
   }
+
+  const busy = loading || following || updating || ingesting;
+  const followUp = scraper.followUp
+    ? followUpProgressOf(
+        scraper.followUp.groups,
+        scraper.preview,
+        following || updating || scraper.followUp.running
+      )
+    : null;
 
   return (
     <main className="relative flex min-h-screen w-full flex-col items-stretch justify-start gap-12 py-16">
@@ -83,99 +270,126 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             <p className="mt-2 truncate text-sm text-black/50" title={scraper.url}>
               {scraper.url}
             </p>
-            <p className="mt-1 text-sm text-black/60">
-              {running
-                ? "Scraped Städteseite und Folgeseiten …"
-                : scraper.entryCount === 1
-                  ? "1 Event gefunden"
-                  : `${scraper.entryCount} Events gefunden`}
-            </p>
+            {loading || (updating && searchProgress && !following) ? (
+              <div className="mt-3 max-w-md">
+                <SearchStatus
+                  progress={searchProgress ?? makeSearchProgress("search", 0, null)}
+                />
+              </div>
+            ) : (
+              <p className="mt-1 text-sm text-black/60">
+                {updating
+                  ? "Einträge werden aktualisiert …"
+                  : following && followUp
+                    ? `${followUp.done} / ${followUp.total} Unterseiten geladen.`
+                    : followUp && canResumeFollowUp(followUp.groups)
+                      ? `${followUp.done} / ${followUp.total} Unterseiten angehalten. Mit Weiter fortsetzen.`
+                      : scraper.preview.length === 0
+                        ? "Mit Scrapen die Suchseite inkl. aller Seiten laden."
+                        : "Danach Unterseiten Scrapen oder Update für einen Abgleich."}
+              </p>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={handleRun}
-            disabled={running}
-            className="rounded-full bg-black px-6 py-3 text-sm font-semibold text-white transition enabled:hover:bg-black/85 disabled:opacity-50"
-          >
-            {running ? "Läuft …" : "Scrapen"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleRerun}
+              disabled={busy}
+              className="rounded-full bg-black px-6 py-3 text-sm font-semibold text-white transition enabled:hover:bg-black/85 disabled:opacity-50"
+            >
+              {loading ? `${searchProgress?.percent ?? 0} %` : "Scrapen"}
+            </button>
+            {following || updating ? (
+              <button
+                type="button"
+                onClick={handleStopFollowUps}
+                className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition hover:bg-black/5"
+              >
+                Anhalten
+                {followUp ? ` ${followUp.done}/${followUp.total}` : ""}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleFollowUps}
+                disabled={busy || scraper.preview.length === 0}
+                className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
+              >
+                {followUp && canResumeFollowUp(followUp.groups)
+                  ? "Weiter"
+                  : "Unterseiten Scrapen"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleUpdate}
+              disabled={busy || scraper.preview.length === 0}
+              className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
+            >
+              {updating ? "Update …" : "Update"}
+            </button>
+            <button
+              type="button"
+              onClick={handleIngest}
+              disabled={busy || scraper.preview.length === 0}
+              className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
+            >
+              {ingesting ? "Senden …" : "An GetHyped senden"}
+            </button>
+          </div>
         </div>
+        {tokenNeeded ? (
+          <label className="mt-3 flex max-w-xl flex-col gap-1 text-sm text-black/60">
+            GetHyped-Token
+            <input
+              type="password"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder="Bearer-Token der Event-Quelle"
+              autoComplete="off"
+              className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black/30"
+            />
+          </label>
+        ) : null}
       </header>
 
-      <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6">
-        {scraper.error && !running ? (
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6">
+        {scraper.error && !busy ? (
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {scraper.error}
           </p>
         ) : null}
+        {scraper.warning && !busy ? (
+          <p className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-sm text-black/60">
+            {scraper.warning}
+          </p>
+        ) : null}
 
-        {scraper.events.length === 0 ? (
+        {scraper.lastUpdate ? <UpdateStatus update={scraper.lastUpdate} /> : null}
+        {scraper.lastIngest ? <IngestStatus ingest={scraper.lastIngest} /> : null}
+
+        {followUp ? (
+          <FollowUpStatus
+            progress={followUp}
+            onStop={following || updating ? handleStopFollowUps : undefined}
+          />
+        ) : null}
+
+        {scraper.preview.length === 0 ? (
           <p className="text-sm text-black/50">
-            {running
-              ? "Daten werden geladen …"
-              : "Noch keine Events. Starte den Scraper mit Scrapen."}
+            {loading
+              ? "Einträge der Suchseite werden gelesen …"
+              : following || updating
+                ? "Einträge werden gelesen …"
+                : "Noch keine Preview. Starte mit Scrapen."}
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-black/10">
-            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-              <thead className="bg-black/[0.04] text-[10px] uppercase tracking-[0.12em] text-black/45">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Eventname</th>
-                  <th className="px-4 py-3 font-medium">Ort</th>
-                  <th className="px-4 py-3 font-medium">Datum</th>
-                  <th className="px-4 py-3 font-medium">Uhrzeit</th>
-                  <th className="px-4 py-3 font-medium">Eventherobild</th>
-                  <th className="px-4 py-3 font-medium">Ticketlink</th>
-                  <th className="px-4 py-3 text-right font-medium">Preis</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scraper.events.map((event, index) => (
-                  <tr
-                    key={`${event.ticketUrl ?? event.name}-${event.startsAt ?? index}`}
-                    className="border-t border-black/5 align-top"
-                  >
-                    <td className="px-4 py-3 font-medium text-black">{event.name}</td>
-                    <td className="px-4 py-3 text-black/70">
-                      {event.location ?? "—"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-black/70">
-                      {event.date ?? "—"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-black/70">
-                      {event.time ?? "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <UrlCell url={event.heroImage} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <UrlCell url={event.ticketUrl} />
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-black/70">
-                      {event.price ?? "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ScraperPreview
+            preview={scraper.preview}
+            groups={followUp?.groups}
+          />
         )}
       </section>
     </main>
-  );
-}
-
-function UrlCell({ url }: { url: string | null }) {
-  if (!url) return <span className="text-black/40">—</span>;
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer"
-      title={url}
-      className="block max-w-[7.5rem] truncate text-black/60 underline decoration-black/20 hover:decoration-black"
-    >
-      {url}
-    </a>
   );
 }

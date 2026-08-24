@@ -9,6 +9,29 @@ export type ScrapedEvent = {
   heroImage: string | null;
   ticketUrl: string | null;
   price: string | null;
+  productGroupId?: string | null;
+};
+
+export const SCRAPER_FIELDS = [
+  "name",
+  "location",
+  "date",
+  "time",
+  "heroImage",
+  "ticketUrl",
+  "price",
+] as const;
+
+export type ScraperField = (typeof SCRAPER_FIELDS)[number];
+
+export const FIELD_LABELS: Record<ScraperField, string> = {
+  name: "Eventname",
+  location: "Ort",
+  date: "Datum",
+  time: "Uhrzeit",
+  heroImage: "Eventherobild",
+  ticketUrl: "Ticketlink",
+  price: "Preis",
 };
 
 const BERLIN = "Europe/Berlin";

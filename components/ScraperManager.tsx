@@ -4,12 +4,21 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import ConfirmDialog from "./ConfirmDialog";
 import ScraperCard from "./ScraperCard";
-import { runScraper } from "@/lib/run-scraper";
 import {
+  ingestToGethyped,
+  loadGethypedToken,
+} from "@/lib/gethyped-ingest";
+import { runScraper, scrapeScraperFollowUps, updateScraperEntries } from "@/lib/run-scraper";
+import type { SearchProgress } from "@/lib/search-progress";
+import {
+  addScraper,
+  getScraper,
+  hydrateScrapers,
   loadScrapers,
   newScraper,
   normalizeUrl,
-  saveScrapers,
+  removeScraper,
+  updateScraper,
   type Scraper,
 } from "@/lib/scrapers";
 
@@ -17,6 +26,13 @@ export default function ScraperManager() {
   const [scrapers, setScrapers] = useState<Scraper[]>([]);
   const [ready, setReady] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [followUpId, setFollowUpId] = useState<string | null>(null);
+  const [updateId, setUpdateId] = useState<string | null>(null);
+  const [ingestId, setIngestId] = useState<string | null>(null);
+  const [searchProgress, setSearchProgress] = useState<
+    Record<string, SearchProgress>
+  >({});
+  const followUpAbort = useRef<AbortController | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -28,17 +44,34 @@ export default function ScraperManager() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const sync = () => {
-      setScrapers(loadScrapers());
+      const loaded = loadScrapers().map((item) => {
+        if (!item.followUp?.running) return item;
+        return (
+          updateScraper(
+            item.id,
+            {
+              followUp: { ...item.followUp, running: false },
+            },
+            { persistEvents: false }
+          ) ?? item
+        );
+      });
+      if (cancelled) return;
+      setScrapers(loaded);
       setReady(true);
     };
-    sync();
+    void hydrateScrapers().then(() => {
+      if (!cancelled) sync();
+    });
     const handleVisible = () => {
       if (document.visibilityState === "visible") sync();
     };
     window.addEventListener("focus", sync);
     document.addEventListener("visibilitychange", handleVisible);
     return () => {
+      cancelled = true;
       window.removeEventListener("focus", sync);
       document.removeEventListener("visibilitychange", handleVisible);
     };
@@ -137,32 +170,153 @@ export default function ScraperManager() {
       setError("Bitte eine gültige URL angeben.");
       return;
     }
-    const nextList = [...scrapers, newScraper(trimmedName, normalizedUrl)];
-    setScrapers(nextList);
-    saveScrapers(nextList);
+    const created = newScraper(trimmedName, normalizedUrl);
+    setScrapers((prev) => [...prev, created]);
+    void addScraper(created);
     closeForm();
   };
 
   const handleRun = async (scraper: Scraper) => {
     setRunningId(scraper.id);
     try {
-      const next = await runScraper(scraper);
+      const next = await runScraper(scraper, (progress, events) => {
+        setSearchProgress((prev) => ({ ...prev, [scraper.id]: progress }));
+        if (!events) return;
+        const current = getScraper(scraper.id);
+        if (!current) return;
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === current.id ? current : item))
+        );
+      });
       if (next) {
         setScrapers((prev) =>
           prev.map((item) => (item.id === next.id ? next : item))
         );
       }
     } finally {
+      setSearchProgress((prev) => {
+        const next = { ...prev };
+        delete next[scraper.id];
+        return next;
+      });
       setRunningId(null);
+    }
+  };
+
+  const handleFollowUps = async (scraper: Scraper) => {
+    const controller = new AbortController();
+    followUpAbort.current = controller;
+    setFollowUpId(scraper.id);
+    try {
+      const next = await scrapeScraperFollowUps(
+        scraper,
+        (_progress, updated) => {
+          setScrapers((prev) =>
+            prev.map((item) => (item.id === updated.id ? updated : item))
+          );
+        },
+        controller.signal
+      );
+      if (next) {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === next.id ? next : item))
+        );
+      }
+    } finally {
+      if (followUpAbort.current === controller) followUpAbort.current = null;
+      setFollowUpId(null);
+    }
+  };
+
+  const handleStopFollowUps = () => {
+    followUpAbort.current?.abort();
+  };
+
+  const handleUpdate = async (scraper: Scraper) => {
+    const controller = new AbortController();
+    followUpAbort.current = controller;
+    setUpdateId(scraper.id);
+    try {
+      const next = await updateScraperEntries(
+        scraper,
+        (_progress, updated) => {
+          setScrapers((prev) =>
+            prev.map((item) => (item.id === updated.id ? updated : item))
+          );
+        },
+        controller.signal,
+        (progress, events) => {
+          setSearchProgress((prev) => ({ ...prev, [scraper.id]: progress }));
+          if (!events) return;
+          const current = getScraper(scraper.id);
+          if (!current) return;
+          setScrapers((prev) =>
+            prev.map((item) => (item.id === current.id ? current : item))
+          );
+        }
+      );
+      if (next) {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === next.id ? next : item))
+        );
+      }
+    } finally {
+      if (followUpAbort.current === controller) followUpAbort.current = null;
+      setSearchProgress((prev) => {
+        const next = { ...prev };
+        delete next[scraper.id];
+        return next;
+      });
+      setUpdateId(null);
+    }
+  };
+
+  const handleIngest = async (scraper: Scraper) => {
+    const events =
+      scraper.preview.length > 0 ? scraper.preview : scraper.events;
+    if (events.length === 0) return;
+    setIngestId(scraper.id);
+    try {
+      const ingest = await ingestToGethyped(events, loadGethypedToken());
+      const next = updateScraper(scraper.id, { lastIngest: ingest });
+      if (next) {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === next.id ? next : item))
+        );
+      }
+    } catch (error) {
+      const next = updateScraper(scraper.id, {
+        lastIngest: {
+          at: new Date().toISOString(),
+          sent: 0,
+          accepted: 0,
+          rejected: 0,
+          skipped: 0,
+          batches: [],
+          error:
+            error instanceof Error
+              ? error.message
+              : "Senden an GetHyped ist fehlgeschlagen.",
+          rejectedItems: [],
+          skippedItems: [],
+        },
+      });
+      if (next) {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === next.id ? next : item))
+        );
+      }
+    } finally {
+      setIngestId(null);
     }
   };
 
   const confirmDelete = () => {
     if (!pendingDelete) return;
-    const nextList = scrapers.filter((item) => item.id !== pendingDelete.id);
-    setScrapers(nextList);
-    saveScrapers(nextList);
+    const id = pendingDelete.id;
+    setScrapers((prev) => prev.filter((item) => item.id !== id));
     setPendingDelete(null);
+    void removeScraper(id);
   };
 
   const canSave = name.trim().length > 0 && url.trim().length > 0;
@@ -196,7 +350,15 @@ export default function ScraperManager() {
                 key={scraper.id}
                 scraper={scraper}
                 running={runningId === scraper.id}
+                following={followUpId === scraper.id}
+                updating={updateId === scraper.id}
+                ingesting={ingestId === scraper.id}
+                searchProgress={searchProgress[scraper.id] ?? null}
                 onRun={() => handleRun(scraper)}
+                onFollowUps={() => handleFollowUps(scraper)}
+                onUpdate={() => handleUpdate(scraper)}
+                onIngest={() => handleIngest(scraper)}
+                onStopFollowUps={handleStopFollowUps}
                 onDelete={() => setPendingDelete(scraper)}
               />
             ))}

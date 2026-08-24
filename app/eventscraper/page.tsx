@@ -15,7 +15,8 @@ export default function EventscraperPage() {
         </Link>
         <Title text="Eventscraper" />
         <p className="text-sm text-black/55">
-          Jede Card ist ein eigener Scraper für eine Seite.
+          Link anlegen, Scrapen für die Suchseite inkl. Pagination, danach
+          Unterseiten Scrapen für die Artist-Seiten.
         </p>
       </header>
       <ScraperManager />

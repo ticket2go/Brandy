@@ -15,15 +15,36 @@ export type ParsedPage = {
 const EVENT_TYPE = /event$/i;
 const SHOW_ALL_LABEL = /alle\s+\d+\s+events?\s+anzeigen|alle\s+events?\s+anzeigen|alle\s+termine/i;
 
+export function artworkContentImage(
+  html: string,
+  pageUrl: string
+): string | null {
+  const origin = originOf(pageUrl);
+  for (const fragment of classFragments(html, "artwork-content")) {
+    const image = imageFromFragment(fragment, origin);
+    if (image) return image;
+  }
+  return null;
+}
+
+export function pageHeroImage(html: string, pageUrl: string): string | null {
+  const origin = originOf(pageUrl);
+  return (
+    artworkContentImage(html, pageUrl) ??
+    largeMediaFromHtml(html, origin) ??
+    absolute(
+      metaContent(html, "og:image") ??
+        metaContent(html, "og:image:url") ??
+        metaContent(html, "twitter:image") ??
+        linkHref(html, "image_src"),
+      origin
+    )
+  );
+}
+
 export function parseEventimPage(html: string, pageUrl: string): ParsedPage {
   const origin = originOf(pageUrl);
-  const heroImage = absolute(
-    metaContent(html, "og:image") ??
-      metaContent(html, "og:image:url") ??
-      metaContent(html, "twitter:image") ??
-      linkHref(html, "image_src"),
-    origin
-  );
+  const heroImage = pageHeroImage(html, pageUrl);
   const title =
     metaContent(html, "og:title") ?? metaContent(html, "twitter:title") ?? heading(html);
 
@@ -288,6 +309,105 @@ function linkOf(record: Record<string, unknown>): string | null {
   const domain = str(holder.domain);
   if (path && domain) return `${domain.replace(/\/$/, "")}${path}`;
   return path;
+}
+
+function classFragments(html: string, className: string): string[] {
+  const out: string[] = [];
+  const opener = new RegExp(
+    `<div\\b[^>]*class=["'][^"']*\\b${escape(className)}\\b[^"']*["'][^>]*>`,
+    "gi"
+  );
+  let match: RegExpExecArray | null;
+  while ((match = opener.exec(html)) !== null) {
+    out.push(html.slice(match.index, match.index + 8000));
+  }
+  return out;
+}
+
+function imageFromFragment(html: string, origin: string): string | null {
+  const candidates: Array<{ url: string; score: number }> = [];
+  const add = (value: string | null, width = 0) => {
+    const url = absolute(value, origin);
+    if (!url) return;
+    candidates.push({ url, score: imageScore(url, width) });
+  };
+
+  for (const tag of ["source", "img"]) {
+    addSrcset(html, tag, add);
+    add(firstAttr(html, tag, "src"));
+    add(firstAttr(html, tag, "data-src"));
+    add(firstAttr(html, tag, "data-original"));
+  }
+
+  const background = html.match(
+    /background(?:-image)?\s*:\s*url\(\s*['"]?([^'")\s]+)['"]?\s*\)/i
+  );
+  add(background?.[1] ?? null, 800);
+
+  candidates.sort((left, right) => right.score - left.score);
+  return candidates[0]?.url ?? null;
+}
+
+function addSrcset(
+  html: string,
+  tag: string,
+  add: (value: string | null, width?: number) => void
+) {
+  const raw =
+    firstAttr(html, tag, "srcset") ?? firstAttr(html, tag, "data-srcset");
+  if (!raw) return;
+  for (const part of raw.split(",")) {
+    const [url, size] = part.trim().split(/\s+/, 2);
+    const width = Number.parseInt(size ?? "", 10);
+    add(url ?? null, Number.isFinite(width) ? width : 0);
+  }
+}
+
+function largeMediaFromHtml(html: string, origin: string): string | null {
+  const pattern =
+    /(?:https?:)?\/\/[^"' )\\]+?\/obj\/(?:media|mam)\/[^"' )\\]+?\.(?:jpe?g|png|webp)/gi;
+  const candidates: Array<{ url: string; score: number }> = [];
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html)) !== null) {
+    const url = absolute(match[0], origin);
+    if (!url || seen.has(url) || isSmallThumb(url)) continue;
+    seen.add(url);
+    candidates.push({ url, score: imageScore(url, 0) });
+  }
+  candidates.sort((left, right) => right.score - left.score);
+  return candidates[0]?.url ?? null;
+}
+
+function isSmallThumb(url: string): boolean {
+  if (/_222x222\.(?:jpe?g|png|webp)$/i.test(url)) return true;
+  const dim = url.match(/\/(?:teaser|galery)\/(\d{2,4})x(\d{2,4})\//i);
+  if (!dim) return false;
+  return Number(dim[1]) <= 400 && Number(dim[2]) <= 400;
+}
+
+function imageScore(url: string, width: number): number {
+  let score = width;
+  if (/artworks|[-_/]header/i.test(url)) score += 10000;
+  const dim = url.match(/\/(\d{2,4})x(\d{2,4})\//);
+  if (dim) {
+    const w = Number(dim[1]);
+    const h = Number(dim[2]);
+    score += Math.max(w, h);
+    if (w <= 400 && h <= 400) score -= 8000;
+  }
+  if (/_222x222\./i.test(url)) score -= 8000;
+  return score;
+}
+
+function firstAttr(html: string, tag: string, name: string): string | null {
+  const pattern = new RegExp(`<${tag}\\b([^>]*)>`, "gi");
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html)) !== null) {
+    const value = attr(match[1] ?? "", name);
+    if (value && !value.startsWith("data:")) return value;
+  }
+  return null;
 }
 
 function imageOf(value: unknown): string | null {
