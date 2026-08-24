@@ -10,8 +10,10 @@ type ScraperCardProps = {
   following: boolean;
   onRun: () => void;
   onFollowUps: () => void;
+  onUpdate: () => void;
   onStopFollowUps?: () => void;
   onDelete: () => void;
+  updating?: boolean;
 };
 
 export default function ScraperCard({
@@ -20,10 +22,12 @@ export default function ScraperCard({
   following,
   onRun,
   onFollowUps,
+  onUpdate,
   onStopFollowUps,
   onDelete,
+  updating = false,
 }: ScraperCardProps) {
-  const busy = running || following;
+  const busy = running || following || updating;
   const hasEntries = scraper.preview.length > 0 || scraper.events.length > 0;
   const followUp = scraper.followUp;
   const followDone = followUp
@@ -64,6 +68,12 @@ export default function ScraperCard({
               ? ` · ${new Date(scraper.lastRunAt).toLocaleString("de-DE")}`
               : ""}
           </p>
+          {scraper.lastUpdate && !busy ? (
+            <p className="mt-1 text-[11px] text-white/45">
+              {scraper.lastUpdate.updated} aktualisiert · {scraper.lastUpdate.added} neu ·{" "}
+              {scraper.lastUpdate.removed} gelöscht
+            </p>
+          ) : null}
           {scraper.error && !busy ? (
             <p className="mt-1 text-[11px] text-red-300">{scraper.error}</p>
           ) : null}
@@ -77,13 +87,21 @@ export default function ScraperCard({
           >
             {running ? "Läuft …" : "Scrapen"}
           </button>
-          {following ? (
+          <button
+            type="button"
+            onClick={onUpdate}
+            disabled={busy || !hasEntries}
+            className="rounded-full bg-white/15 px-4 py-2 text-[12px] font-semibold text-white transition enabled:hover:bg-white/25 disabled:opacity-40"
+          >
+            {updating ? "Update …" : "Update"}
+          </button>
+          {following || updating ? (
             <button
               type="button"
               onClick={onStopFollowUps}
               className="rounded-full bg-white/15 px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-white/25"
             >
-              Anhalten {followDone}/{followTotal}
+              Anhalten{followTotal > 0 ? ` ${followDone}/${followTotal}` : ""}
             </button>
           ) : (
             <button

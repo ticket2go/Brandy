@@ -1,3 +1,4 @@
+import type { ScraperUpdate } from "@/lib/event-diff";
 import { withoutListingThumb } from "@/lib/eventim-artwork";
 import {
   isFollowUpGroup,
@@ -36,6 +37,7 @@ export type Scraper = {
   error: string | null;
   warning: string | null;
   followUp: ScraperFollowUp | null;
+  lastUpdate: ScraperUpdate | null;
 };
 
 const STORAGE_KEY = "eventscraper.scrapers";
@@ -65,6 +67,7 @@ export function newScraper(name: string, url: string): Scraper {
     error: null,
     warning: null,
     followUp: null,
+    lastUpdate: null,
   };
 }
 
@@ -205,6 +208,22 @@ function withDefaults(row: Scraper): Scraper {
     error: typeof row.error === "string" ? row.error : null,
     warning: typeof row.warning === "string" ? row.warning : null,
     followUp: normalizeFollowUp(row.followUp),
+    lastUpdate: normalizeUpdate(row.lastUpdate),
+  };
+}
+
+function normalizeUpdate(value: unknown): ScraperUpdate | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Partial<ScraperUpdate>;
+  if (typeof row.at !== "string") return null;
+  const num = (item: unknown) =>
+    typeof item === "number" && Number.isFinite(item) ? item : 0;
+  return {
+    at: row.at,
+    updated: num(row.updated),
+    added: num(row.added),
+    removed: num(row.removed),
+    unchanged: num(row.unchanged),
   };
 }
 

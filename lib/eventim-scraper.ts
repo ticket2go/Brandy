@@ -1,4 +1,9 @@
-import { applyHeroImages, resolveHeroImage, withoutListingThumb } from "@/lib/eventim-artwork";
+import {
+  applyHeroImages,
+  isListingThumb,
+  resolveHeroImage,
+  withoutListingThumb,
+} from "@/lib/eventim-artwork";
 import { absolute, parseEventimPage } from "@/lib/eventim-parse";
 import {
   eventsForGroup,
@@ -310,7 +315,11 @@ async function scrapeOneFollowUpGroup(
   });
   const source = follow.events.length > 1 ? follow.events : originals;
   const artwork = await resolveHeroImage(
-    originals[0]?.heroImage ?? source[0]?.heroImage ?? null
+    originals[0]?.heroImage ?? source[0]?.heroImage ?? null,
+    {
+      name: originals[0]?.name ?? source[0]?.name,
+      startsAt: source[0]?.startsAt ?? originals[0]?.startsAt,
+    }
   );
   return source.map((event) =>
     withDisplayFields({
@@ -705,20 +714,22 @@ function linkOf(item: Record<string, unknown>): string | null {
 }
 
 function imageOf(item: Record<string, unknown>): string | null {
-  const direct =
-    asString(item.imageUrl) ??
-    asString(asRecord(item.image)?.url) ??
-    asString(item.image);
-  if (direct) return direct;
-  const images = item.images;
-  if (!Array.isArray(images)) return null;
-  for (const entry of images) {
-    if (typeof entry === "string" && entry.trim()) return entry.trim();
-    const record = asRecord(entry);
+  const candidates: string[] = [];
+  const push = (value: unknown) => {
+    if (typeof value === "string" && value.trim()) {
+      candidates.push(value.trim());
+      return;
+    }
+    const record = asRecord(value);
     const url = asString(record?.url) ?? asString(record?.src);
-    if (url) return url;
+    if (url) candidates.push(url);
+  };
+  push(item.imageUrl);
+  push(item.image);
+  if (Array.isArray(item.images)) {
+    for (const entry of item.images) push(entry);
   }
-  return null;
+  return candidates.find((url) => !isListingThumb(url)) ?? candidates[0] ?? null;
 }
 
 function nested(value: unknown, path: string[]): unknown {

@@ -14,6 +14,7 @@ import {
   type FollowUpGroup,
   type FollowUpProgress,
 } from "@/lib/follow-up";
+import { diffEvents } from "@/lib/event-diff";
 import type { ScrapedEvent } from "@/lib/scraped-event";
 import {
   applySelection,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/scrapers";
 
 export type { FollowUpProgress } from "@/lib/follow-up";
+export type { ScraperUpdate } from "@/lib/event-diff";
 
 type RunPayload = {
   events: ScrapedEvent[];
@@ -60,6 +62,71 @@ export async function runScraper(scraper: Scraper): Promise<Scraper | null> {
     error: result.events.length > 0 ? null : result.error,
     warning: result.warning,
     followUp: null,
+  });
+}
+
+export async function updateScraperEntries(
+  scraper: Scraper,
+  onProgress?: (progress: FollowUpProgress, next: Scraper) => void,
+  signal?: AbortSignal
+): Promise<Scraper | null> {
+  const previous =
+    scraper.preview.length > 0 ? scraper.preview : scraper.events;
+  const search = await scrapeWithFallback(scraper.url);
+  if (search.events.length === 0) {
+    return updateScraper(scraper.id, {
+      lastRunAt: new Date().toISOString(),
+      error: search.error ?? "Beim Update wurden keine Einträge gefunden.",
+      warning: search.warning,
+    });
+  }
+
+  const expand = Boolean(
+    scraper.followUp?.groups.some(
+      (group) => group.status === "done" || group.status === "paused"
+    )
+  );
+
+  let nextEvents = search.events;
+
+  if (expand) {
+    const expanded = await scrapeScraperFollowUps(
+      {
+        ...scraper,
+        preview: search.events,
+        followUp: null,
+      },
+      onProgress,
+      signal
+    );
+    if (expanded) {
+      nextEvents = expanded.preview;
+      const stats = diffEvents(previous, nextEvents);
+      return updateScraper(expanded.id, {
+        preview: nextEvents,
+        events: nextEvents,
+        entryCount: nextEvents.length,
+        lastRunAt: new Date().toISOString(),
+        error: null,
+        warning: expanded.warning,
+        lastUpdate: stats,
+        followUp: expanded.followUp
+          ? { ...expanded.followUp, running: false }
+          : null,
+      });
+    }
+  }
+
+  const stats = diffEvents(previous, nextEvents);
+  return updateScraper(scraper.id, {
+    preview: nextEvents,
+    events: nextEvents,
+    entryCount: nextEvents.length,
+    lastRunAt: new Date().toISOString(),
+    error: null,
+    warning: search.warning,
+    followUp: expand ? scraper.followUp : null,
+    lastUpdate: stats,
   });
 }
 

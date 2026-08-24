@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import ConfirmDialog from "./ConfirmDialog";
 import ScraperCard from "./ScraperCard";
-import { runScraper, scrapeScraperFollowUps } from "@/lib/run-scraper";
+import { runScraper, scrapeScraperFollowUps, updateScraperEntries } from "@/lib/run-scraper";
 import {
   loadScrapers,
   newScraper,
@@ -19,6 +19,7 @@ export default function ScraperManager() {
   const [ready, setReady] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [followUpId, setFollowUpId] = useState<string | null>(null);
+  const [updateId, setUpdateId] = useState<string | null>(null);
   const followUpAbort = useRef<AbortController | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -197,6 +198,31 @@ export default function ScraperManager() {
     followUpAbort.current?.abort();
   };
 
+  const handleUpdate = async (scraper: Scraper) => {
+    const controller = new AbortController();
+    followUpAbort.current = controller;
+    setUpdateId(scraper.id);
+    try {
+      const next = await updateScraperEntries(
+        scraper,
+        (_progress, updated) => {
+          setScrapers((prev) =>
+            prev.map((item) => (item.id === updated.id ? updated : item))
+          );
+        },
+        controller.signal
+      );
+      if (next) {
+        setScrapers((prev) =>
+          prev.map((item) => (item.id === next.id ? next : item))
+        );
+      }
+    } finally {
+      if (followUpAbort.current === controller) followUpAbort.current = null;
+      setUpdateId(null);
+    }
+  };
+
   const confirmDelete = () => {
     if (!pendingDelete) return;
     const nextList = scrapers.filter((item) => item.id !== pendingDelete.id);
@@ -237,8 +263,10 @@ export default function ScraperManager() {
                 scraper={scraper}
                 running={runningId === scraper.id}
                 following={followUpId === scraper.id}
+                updating={updateId === scraper.id}
                 onRun={() => handleRun(scraper)}
                 onFollowUps={() => handleFollowUps(scraper)}
+                onUpdate={() => handleUpdate(scraper)}
                 onStopFollowUps={handleStopFollowUps}
                 onDelete={() => setPendingDelete(scraper)}
               />

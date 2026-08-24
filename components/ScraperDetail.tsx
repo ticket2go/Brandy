@@ -6,15 +6,15 @@ import { useEffect, useRef, useState } from "react";
 import FollowUpStatus from "@/components/FollowUpStatus";
 import ScraperPreview from "@/components/ScraperPreview";
 import Title from "@/components/Title";
+import UpdateStatus from "@/components/UpdateStatus";
 import { canResumeFollowUp, followUpProgressOf } from "@/lib/follow-up";
 import {
-  applyScraperSelection,
   loadScraperPreview,
   runScraper,
   scrapeScraperFollowUps,
+  updateScraperEntries,
 } from "@/lib/run-scraper";
-import { FIELD_LABELS, type ScrapedEvent, type ScraperField } from "@/lib/scraped-event";
-import { getScraper, updateScraper, type Scraper, type ScraperSelection } from "@/lib/scrapers";
+import { getScraper, updateScraper, type Scraper } from "@/lib/scrapers";
 
 type ScraperDetailProps = {
   id: string;
@@ -25,7 +25,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [following, setFollowing] = useState(false);
-  const [selection, setSelection] = useState<ScraperSelection | null>(null);
+  const [updating, setUpdating] = useState(false);
   const autoLoad = useRef(false);
   const stopFollowUps = useRef<AbortController | null>(null);
 
@@ -36,10 +36,8 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
         followUp: { ...current.followUp, running: false },
       });
       setScraper(next);
-      setSelection(next?.selection ?? null);
     } else {
       setScraper(current);
-      setSelection(current?.selection ?? null);
     }
     setReady(true);
   }, [id]);
@@ -55,7 +53,6 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
   const persist = (next: Scraper | null) => {
     if (!next) return;
     setScraper(next);
-    setSelection(next.selection);
   };
 
   const handleLoad = async () => {
@@ -68,19 +65,11 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     }
   };
 
-  const handleApply = () => {
-    if (!scraper || !selection) return;
-    persist(applyScraperSelection(scraper, selection));
-  };
-
   const handleRerun = async () => {
     if (!scraper) return;
     setLoading(true);
     try {
-      const withSelection = selection
-        ? { ...scraper, selection }
-        : scraper;
-      persist(await runScraper(withSelection));
+      persist(await runScraper(scraper));
     } finally {
       setLoading(false);
     }
@@ -105,6 +94,25 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     }
   };
 
+  const handleUpdate = async () => {
+    if (!scraper) return;
+    const controller = new AbortController();
+    stopFollowUps.current = controller;
+    setUpdating(true);
+    try {
+      persist(
+        await updateScraperEntries(
+          scraper,
+          (_progress, next) => persist(next),
+          controller.signal
+        )
+      );
+    } finally {
+      if (stopFollowUps.current === controller) stopFollowUps.current = null;
+      setUpdating(false);
+    }
+  };
+
   const handleStopFollowUps = () => {
     stopFollowUps.current?.abort();
   };
@@ -119,7 +127,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     );
   }
 
-  if (!scraper || !selection) {
+  if (!scraper) {
     return (
       <main className="relative flex min-h-screen w-full flex-col items-stretch justify-start gap-12 py-16">
         <section className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6">
@@ -140,14 +148,12 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     );
   }
 
-  const selectedCount = selection.selectAll
-    ? scraper.preview.length
-    : selection.itemIds.length;
+  const busy = loading || following || updating;
   const followUp = scraper.followUp
     ? followUpProgressOf(
         scraper.followUp.groups,
         scraper.preview,
-        following || scraper.followUp.running
+        following || updating || scraper.followUp.running
       )
     : null;
 
@@ -174,25 +180,27 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             <p className="mt-1 text-sm text-black/60">
               {loading
                 ? "Suchseite inkl. Pagination wird geladen …"
-                : following && followUp
-                  ? `${followUp.done} / ${followUp.total} Unterseiten geladen.`
-                  : followUp && canResumeFollowUp(followUp.groups)
-                    ? `${followUp.done} / ${followUp.total} Unterseiten angehalten. Mit Weiter fortsetzen.`
-                    : scraper.preview.length === 0
-                      ? "Mit Scrapen die Suchseite inkl. aller Seiten laden."
-                      : "Danach Unterseiten Scrapen, um die Artist-Seiten zu holen."}
+                : updating
+                  ? "Einträge werden aktualisiert …"
+                  : following && followUp
+                    ? `${followUp.done} / ${followUp.total} Unterseiten geladen.`
+                    : followUp && canResumeFollowUp(followUp.groups)
+                      ? `${followUp.done} / ${followUp.total} Unterseiten angehalten. Mit Weiter fortsetzen.`
+                      : scraper.preview.length === 0
+                        ? "Mit Scrapen die Suchseite inkl. aller Seiten laden."
+                        : "Danach Unterseiten Scrapen oder Update für einen Abgleich."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={handleRerun}
-              disabled={loading || following}
+              disabled={busy}
               className="rounded-full bg-black px-6 py-3 text-sm font-semibold text-white transition enabled:hover:bg-black/85 disabled:opacity-50"
             >
               {loading ? "Läuft …" : "Scrapen"}
             </button>
-            {following ? (
+            {following || updating ? (
               <button
                 type="button"
                 onClick={handleStopFollowUps}
@@ -205,7 +213,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
               <button
                 type="button"
                 onClick={handleFollowUps}
-                disabled={loading || scraper.preview.length === 0}
+                disabled={busy || scraper.preview.length === 0}
                 className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
               >
                 {followUp && canResumeFollowUp(followUp.groups)
@@ -215,33 +223,34 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             )}
             <button
               type="button"
-              onClick={handleApply}
-              disabled={loading || following || scraper.preview.length === 0}
+              onClick={handleUpdate}
+              disabled={busy || scraper.preview.length === 0}
               className="rounded-full border border-black/15 px-5 py-3 text-sm font-semibold text-black transition enabled:hover:bg-black/5 disabled:opacity-50"
             >
-              Übernehmen
-              {selectedCount > 0 ? ` (${selectedCount})` : ""}
+              {updating ? "Update …" : "Update"}
             </button>
           </div>
         </div>
       </header>
 
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6">
-        {scraper.error && !loading && !following ? (
+        {scraper.error && !busy ? (
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {scraper.error}
           </p>
         ) : null}
-        {scraper.warning && !loading && !following ? (
+        {scraper.warning && !busy ? (
           <p className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-sm text-black/60">
             {scraper.warning}
           </p>
         ) : null}
 
+        {scraper.lastUpdate ? <UpdateStatus update={scraper.lastUpdate} /> : null}
+
         {followUp ? (
           <FollowUpStatus
             progress={followUp}
-            onStop={following ? handleStopFollowUps : undefined}
+            onStop={following || updating ? handleStopFollowUps : undefined}
           />
         ) : null}
 
@@ -249,142 +258,17 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
           <p className="text-sm text-black/50">
             {loading
               ? "Einträge der Suchseite werden gelesen …"
-              : following
-                ? "Unterseiten werden gelesen …"
+              : following || updating
+                ? "Einträge werden gelesen …"
                 : "Noch keine Preview. Starte mit Scrapen."}
           </p>
         ) : (
           <ScraperPreview
             preview={scraper.preview}
-            selection={selection}
-            onChange={setSelection}
             groups={followUp?.groups}
           />
         )}
-
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-black">Tabelle</h2>
-              <p className="text-sm text-black/50">
-                {scraper.events.length === 1
-                  ? "1 übernommenes Event"
-                  : `${scraper.events.length} übernommene Events`}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleLoad}
-              disabled={loading || following}
-              className="w-fit text-sm font-medium text-black/60 underline decoration-black/20 hover:text-black hover:decoration-black disabled:opacity-50"
-            >
-              Preview neu laden
-            </button>
-          </div>
-
-          {scraper.events.length === 0 ? (
-            <p className="text-sm text-black/45">
-              Noch nichts übernommen. Wähle Einträge in der Preview und klicke
-              Übernehmen.
-            </p>
-          ) : (
-            <EventsTable
-              events={scraper.events}
-              fields={selection.fields}
-            />
-          )}
-        </div>
       </section>
     </main>
-  );
-}
-
-function EventsTable({
-  events,
-  fields,
-}: {
-  events: ScrapedEvent[];
-  fields: ScraperField[];
-}) {
-  const columns = fields.length > 0 ? fields : (["name"] as ScraperField[]);
-  return (
-    <div className="overflow-x-auto rounded-2xl border border-black/10">
-      <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-        <thead className="bg-black/[0.04] text-[10px] uppercase tracking-[0.12em] text-black/45">
-          <tr>
-            {columns.map((field) => (
-              <th
-                key={field}
-                className={`px-4 py-3 font-medium ${
-                  field === "price" ? "text-right" : ""
-                }`}
-              >
-                {FIELD_LABELS[field]}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {events.map((event, index) => (
-            <tr
-              key={`${event.ticketUrl ?? event.name}-${event.startsAt ?? index}`}
-              className="border-t border-black/5 align-top"
-            >
-              {columns.map((field) => (
-                <td
-                  key={field}
-                  className={`px-4 py-3 ${
-                    field === "name" ? "font-medium text-black" : "text-black/70"
-                  } ${
-                    field === "date" || field === "time" || field === "price"
-                      ? "whitespace-nowrap"
-                      : ""
-                  } ${field === "price" ? "text-right" : ""}`}
-                >
-                  <TableCell event={event} field={field} />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function TableCell({
-  event,
-  field,
-}: {
-  event: ScrapedEvent;
-  field: ScraperField;
-}) {
-  if (field === "heroImage") return <UrlCell url={event.heroImage} />;
-  if (field === "ticketUrl") return <UrlCell url={event.ticketUrl} />;
-  const value =
-    field === "name"
-      ? event.name
-      : field === "location"
-        ? event.location
-        : field === "date"
-          ? event.date
-          : field === "time"
-            ? event.time
-            : event.price;
-  return <>{value || "—"}</>;
-}
-
-function UrlCell({ url }: { url: string | null }) {
-  if (!url) return <span className="text-black/40">—</span>;
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer"
-      title={url}
-      className="block max-w-[7.5rem] truncate text-black/60 underline decoration-black/20 hover:decoration-black"
-    >
-      {url}
-    </a>
   );
 }
