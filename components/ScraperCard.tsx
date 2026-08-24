@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 
+import IngestLiveStatus from "@/components/IngestLiveStatus";
 import SearchStatus from "@/components/SearchStatus";
 import { makeSearchProgress, type SearchProgress } from "@/lib/search-progress";
+import type { IngestProgress } from "@/lib/ingest-progress";
 import type { Scraper } from "@/lib/scrapers";
 
 type ScraperCardProps = {
@@ -19,6 +21,7 @@ type ScraperCardProps = {
   updating?: boolean;
   ingesting?: boolean;
   searchProgress?: SearchProgress | null;
+  ingestProgress?: IngestProgress | null;
 };
 
 export default function ScraperCard({
@@ -34,6 +37,7 @@ export default function ScraperCard({
   updating = false,
   ingesting = false,
   searchProgress = null,
+  ingestProgress = null,
 }: ScraperCardProps) {
   const busy = running || following || updating || ingesting;
   const hasEntries =
@@ -67,7 +71,11 @@ export default function ScraperCard({
           <p className="mt-1 truncate text-[12px] text-white/50" title={scraper.url}>
             {scraper.url}
           </p>
-          {running || (updating && searchProgress && !following) ? (
+          {ingesting && ingestProgress ? (
+            <div className="mt-2">
+              <IngestLiveStatus tone="dark" progress={ingestProgress} />
+            </div>
+          ) : running || (updating && searchProgress && !following) ? (
             <div className="mt-2">
               <SearchStatus
                 tone="dark"
@@ -93,10 +101,16 @@ export default function ScraperCard({
             </p>
           ) : null}
           {scraper.lastIngest && !busy ? (
-            <p className="mt-1 text-[11px] text-white/45">
-              GetHyped: {scraper.lastIngest.accepted} angenommen ·{" "}
-              {scraper.lastIngest.rejected} abgelehnt · {scraper.lastIngest.skipped}{" "}
-              übersprungen
+            <p
+              className={`mt-1 text-[11px] ${
+                scraper.lastIngest.outcome === "success"
+                  ? "text-emerald-300"
+                  : scraper.lastIngest.outcome === "failed"
+                    ? "text-red-300"
+                    : "text-amber-200"
+              }`}
+            >
+              {scraper.lastIngest.summary}
             </p>
           ) : null}
           {scraper.error && !busy ? (
@@ -128,7 +142,7 @@ export default function ScraperCard({
             disabled={busy || !hasEntries}
             className="rounded-full bg-white/15 px-4 py-2 text-[12px] font-semibold text-white transition enabled:hover:bg-white/25 disabled:opacity-40"
           >
-            {ingesting ? "Senden …" : "An GetHyped senden"}
+            {ingesting ? `${ingestProgress?.percent ?? 0} %` : "An GetHyped senden"}
           </button>
           {following || updating ? (
             <button

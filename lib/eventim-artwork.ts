@@ -119,12 +119,11 @@ export async function resolveHeroImage(
   listing: string | null,
   extra?: HeroExtra
 ): Promise<string | null> {
-  const direct = withoutListingThumb(listing);
-  if (direct) return direct;
   const cacheKey = `${listing ?? ""}|${extra?.name ?? ""}|${extra?.ticketUrl ?? ""}|${extra?.fetchPage !== false}|${extra?.quick === true}`;
   if (heroCache.has(cacheKey)) return heroCache.get(cacheKey) ?? null;
 
-  let found = await firstExisting(listingSizeVariants(listing));
+  // Artwork-Header hat Vorrang vor Teaser-Größen und 222er-Listenbildern.
+  let found = await firstExisting(publishHeroCandidates(listing));
   if (!found) {
     found = await firstExisting(heroImageCandidates(listing, extra));
   }
@@ -206,7 +205,7 @@ function jobKey(event: {
   return `name:${(event.name ?? "").trim().toLowerCase()}`;
 }
 
-function rewriteListingToArtwork(listing: string | null): string | null {
+export function rewriteListingToArtwork(listing: string | null): string | null {
   if (!listing || !/\/teaser\/\d+x\d+\//i.test(listing)) return null;
   const artworks = listing.replace(/\/teaser\/\d+x\d+\//i, "/teaser/artworks/");
   const header = artworks.replace(
@@ -215,6 +214,33 @@ function rewriteListingToArtwork(listing: string | null): string | null {
   );
   if (header !== artworks) return header;
   return artworks.replace(/-\d{4}\.(jpe?g|png|webp)$/i, "-header.$1");
+}
+
+/** Größtes öffentlich prüfbares Eventim-Bild, sonst das Listenbild. */
+export function publishHeroCandidates(listing: string | null): string[] {
+  if (!listing) return [];
+  const out: string[] = [];
+  const add = (value: string | null | undefined) => {
+    if (!value || out.includes(value)) return;
+    out.push(value);
+  };
+  add(rewriteListingToArtwork(listing));
+  for (const url of listingSizeVariants(listing)) add(url);
+  add(withoutListingThumb(listing));
+  add(listing);
+  return out;
+}
+
+export async function upgradeHeroForPublish(
+  listing: string | null,
+  extra?: HeroExtra
+): Promise<string | null> {
+  if (!listing && !extra?.name && !extra?.ticketUrl) return null;
+  return resolveHeroImage(listing, {
+    ...extra,
+    fetchPage: extra?.fetchPage ?? false,
+    quick: extra?.quick ?? false,
+  });
 }
 
 function rewriteListingToTeasers(listing: string | null): string[] {
