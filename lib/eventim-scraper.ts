@@ -334,20 +334,7 @@ function searchTermOf(pageUrl: URL): string | null {
     pageUrl.searchParams.get("search_term") ??
     pageUrl.searchParams.get("q");
   if (term?.trim()) return term.trim();
-  const city = cityOf(pageUrl);
-  if (city) return city;
-  return slugSearchTerm(pageUrl);
-}
-
-function slugSearchTerm(pageUrl: URL): string | null {
-  const segments = pageUrl.pathname.split("/").filter(Boolean);
-  const type = segments[0]?.toLowerCase();
-  if (!type || !["artist", "attraction", "eventseries", "event"].includes(type)) {
-    return null;
-  }
-  const slug = decodeURIComponent(segments[1] ?? "").replace(/-\d+$/, "");
-  const name = slug.replace(/-/g, " ").trim();
-  return name || null;
+  return cityOf(pageUrl);
 }
 
 function cityOf(pageUrl: URL): string | null {
