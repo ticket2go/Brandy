@@ -319,6 +319,7 @@ async function scrapeOneFollowUpGroup(
     {
       name: originals[0]?.name ?? source[0]?.name,
       startsAt: source[0]?.startsAt ?? originals[0]?.startsAt,
+      ticketUrl: originals[0]?.ticketUrl ?? source[0]?.ticketUrl,
     }
   );
   return source.map((event) =>

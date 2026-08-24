@@ -27,9 +27,9 @@ export function artworkContentImage(
   return null;
 }
 
-export function parseEventimPage(html: string, pageUrl: string): ParsedPage {
+export function pageHeroImage(html: string, pageUrl: string): string | null {
   const origin = originOf(pageUrl);
-  const heroImage =
+  return (
     artworkContentImage(html, pageUrl) ??
     absolute(
       metaContent(html, "og:image") ??
@@ -37,7 +37,13 @@ export function parseEventimPage(html: string, pageUrl: string): ParsedPage {
         metaContent(html, "twitter:image") ??
         linkHref(html, "image_src"),
       origin
-    );
+    )
+  );
+}
+
+export function parseEventimPage(html: string, pageUrl: string): ParsedPage {
+  const origin = originOf(pageUrl);
+  const heroImage = pageHeroImage(html, pageUrl);
   const title =
     metaContent(html, "og:title") ?? metaContent(html, "twitter:title") ?? heading(html);
 
@@ -359,7 +365,14 @@ function addSrcset(
 function imageScore(url: string, width: number): number {
   let score = width;
   if (/artworks|[-_/]header/i.test(url)) score += 10000;
-  if (/\/\d{2,3}x\d{2,3}\//.test(url)) score -= 5000;
+  const dim = url.match(/\/(\d{2,4})x(\d{2,4})\//);
+  if (dim) {
+    const w = Number(dim[1]);
+    const h = Number(dim[2]);
+    score += Math.max(w, h);
+    if (w <= 400 && h <= 400) score -= 8000;
+  }
+  if (/_222x222\./i.test(url)) score -= 8000;
   return score;
 }
 

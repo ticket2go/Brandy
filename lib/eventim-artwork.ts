@@ -1,12 +1,19 @@
-const LISTING_THUMB =
-  /(?:\/(?:teaser|galery)\/\d{2,3}x\d{2,3}\/|_222x222\.(?:jpe?g|png|webp)$)/i;
+import { pageHeroImage } from "@/lib/eventim-parse";
 
 const ARTWORKS = "/obj/media/DE-eventim/teaser/artworks";
+const TEASER_SIZES = ["1920x600", "1140x400", "800x450", "640x360"];
 const MAX_CANDIDATES = 24;
 const heroCache = new Map<string, string | null>();
+const pageHeroCache = new Map<string, string | null>();
 
 export function isListingThumb(url: string | null | undefined): boolean {
-  return Boolean(url && LISTING_THUMB.test(url));
+  if (!url) return false;
+  if (/_222x222\.(?:jpe?g|png|webp)$/i.test(url)) return true;
+  const dim = url.match(/\/(?:teaser|galery)\/(\d{2,4})x(\d{2,4})\//i);
+  if (!dim) return false;
+  const width = Number(dim[1]);
+  const height = Number(dim[2]);
+  return width <= 400 && height <= 400;
 }
 
 export function withoutListingThumb(
@@ -16,9 +23,15 @@ export function withoutListingThumb(
   return url;
 }
 
+type HeroExtra = {
+  name?: string | null;
+  startsAt?: string | null;
+  ticketUrl?: string | null;
+};
+
 export function heroImageCandidates(
   listing: string | null,
-  extra?: { name?: string | null; startsAt?: string | null }
+  extra?: HeroExtra
 ): string[] {
   const out: string[] = [];
   const add = (value: string | null | undefined) => {
@@ -27,14 +40,24 @@ export function heroImageCandidates(
   };
 
   add(rewriteListingToArtwork(listing));
+  for (const url of rewriteListingToTeasers(listing)) add(url);
 
-  const origin = originOf(listing);
+  const origin = originOf(listing ?? extra?.ticketUrl ?? null);
   const years = yearsOf(listing, extra?.startsAt);
-  const slugs = slugsOf(listing, extra?.name);
+  const slugs = slugsOf(listing, extra?.name, extra?.ticketUrl);
 
   for (const year of years) {
     for (const slug of slugs.slice(0, 2)) {
       add(`${origin}${ARTWORKS}/${year}/${slug}-tickets-header.jpg`);
+    }
+  }
+  for (const year of years.slice(0, 4)) {
+    for (const slug of slugs.slice(0, 2)) {
+      for (const size of TEASER_SIZES) {
+        add(
+          `${origin}/obj/media/DE-eventim/teaser/${size}/${year}/${slug}-tickets-${year}.jpg`
+        );
+      }
     }
   }
   for (const year of years) {
@@ -49,11 +72,11 @@ export function heroImageCandidates(
 
 export async function resolveHeroImage(
   listing: string | null,
-  extra?: { name?: string | null; startsAt?: string | null }
+  extra?: HeroExtra
 ): Promise<string | null> {
   const direct = withoutListingThumb(listing);
   if (direct) return direct;
-  const cacheKey = `${listing ?? ""}|${extra?.name ?? ""}|${extra?.startsAt ?? ""}`;
+  const cacheKey = `${listing ?? ""}|${extra?.name ?? ""}|${extra?.startsAt ?? ""}|${extra?.ticketUrl ?? ""}`;
   if (heroCache.has(cacheKey)) return heroCache.get(cacheKey) ?? null;
 
   const candidates = heroImageCandidates(listing, extra);
@@ -66,6 +89,10 @@ export async function resolveHeroImage(
     if (hit >= 0) found = batch[hit] ?? null;
   }
 
+  if (!found) {
+    found = await fetchEventPageHero(extra?.ticketUrl ?? null);
+  }
+
   heroCache.set(cacheKey, found);
   return found;
 }
@@ -75,12 +102,10 @@ export async function applyHeroImages(
     heroImage: string | null;
     name?: string | null;
     startsAt?: string | null;
+    ticketUrl?: string | null;
   }>
 ): Promise<void> {
-  const jobs = new Map<
-    string,
-    { listing: string | null; name?: string | null; startsAt?: string | null }
-  >();
+  const jobs = new Map<string, HeroExtra & { listing: string | null }>();
   for (const event of events) {
     const key = jobKey(event);
     if (jobs.has(key)) continue;
@@ -88,6 +113,7 @@ export async function applyHeroImages(
       listing: event.heroImage,
       name: event.name,
       startsAt: event.startsAt,
+      ticketUrl: event.ticketUrl,
     });
   }
 
@@ -112,8 +138,9 @@ function jobKey(event: {
   heroImage: string | null;
   name?: string | null;
   startsAt?: string | null;
+  ticketUrl?: string | null;
 }): string {
-  return `${event.heroImage ?? ""}|${event.name ?? ""}|${event.startsAt ?? ""}`;
+  return `${event.heroImage ?? ""}|${event.name ?? ""}|${event.startsAt ?? ""}|${event.ticketUrl ?? ""}`;
 }
 
 function rewriteListingToArtwork(listing: string | null): string | null {
@@ -125,6 +152,72 @@ function rewriteListingToArtwork(listing: string | null): string | null {
   );
   if (header !== artworks) return header;
   return artworks.replace(/-\d{4}\.(jpe?g|png|webp)$/i, "-header.$1");
+}
+
+function rewriteListingToTeasers(listing: string | null): string[] {
+  if (!listing || !/\/teaser\/\d+x\d+\//i.test(listing)) return [];
+  return TEASER_SIZES.map((size) =>
+    listing.replace(/\/teaser\/\d+x\d+\//i, `/teaser/${size}/`)
+  );
+}
+
+async function fetchEventPageHero(
+  ticketUrl: string | null
+): Promise<string | null> {
+  if (!ticketUrl || !isEventimProductPage(ticketUrl)) return null;
+  if (pageHeroCache.has(ticketUrl)) return pageHeroCache.get(ticketUrl) ?? null;
+
+  let hero: string | null = null;
+  if (typeof window !== "undefined") {
+    try {
+      const response = await fetch(
+        `/api/scraper/page?url=${encodeURIComponent(ticketUrl)}`,
+        { cache: "no-store" }
+      );
+      const payload = (await response.json()) as { hero?: string | null };
+      hero = withoutListingThumb(payload.hero);
+    } catch {
+      hero = null;
+    }
+  } else {
+    const html = await fetchEventimHtml(ticketUrl);
+    hero = html ? withoutListingThumb(pageHeroImage(html, ticketUrl)) : null;
+  }
+
+  pageHeroCache.set(ticketUrl, hero);
+  return hero;
+}
+
+export async function fetchEventimHtml(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url, {
+      redirect: "follow",
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+      headers: {
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept-language": "de-DE,de;q=0.9,en;q=0.8",
+      },
+    });
+    if (!response.ok) return null;
+    const body = await response.text();
+    if (/access denied|permission to access/i.test(body)) return null;
+    return body;
+  } catch {
+    return null;
+  }
+}
+
+export function isEventimProductPage(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return (
+      /(^|\.)eventim\.(de|at|ch|com)$/i.test(url.hostname) &&
+      /^\/(event|artist|attraction|eventseries)\//i.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function imageExists(url: string): Promise<boolean> {
@@ -178,7 +271,11 @@ async function requestOk(
   }
 }
 
-function slugsOf(listing: string | null, name?: string | null): string[] {
+function slugsOf(
+  listing: string | null,
+  name?: string | null,
+  ticketUrl?: string | null
+): string[] {
   const slugs: string[] = [];
   const add = (value: string | null | undefined) => {
     const slug = slugify(value ?? "");
@@ -213,7 +310,26 @@ function slugsOf(listing: string | null, name?: string | null): string[] {
   );
   if (fromTeaser?.[1]) add(fromTeaser[1]);
 
+  const eventSlug = slugFromTicketUrl(ticketUrl);
+  if (eventSlug) {
+    const parts = eventSlug.split("-").filter(Boolean);
+    if (parts.length >= 3) add(parts.slice(0, 3).join("-"));
+    add(eventSlug);
+  }
+
   return slugs;
+}
+
+function slugFromTicketUrl(ticketUrl: string | null | undefined): string | null {
+  if (!ticketUrl) return null;
+  try {
+    const last =
+      new URL(ticketUrl).pathname.split("/").filter(Boolean).pop() ?? "";
+    const slug = last.replace(/-\d{4,}$/, "");
+    return slug.length > 2 ? slug : null;
+  } catch {
+    return null;
+  }
 }
 
 function yearsOf(listing: string | null, startsAt?: string | null): string[] {
