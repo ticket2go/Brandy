@@ -1030,3 +1030,491 @@ export async function generateIdmlPackage(
     compressionOptions: { level: 6 },
   });
 }
+
+// =====================================================================
+// Praesentations-Vorlage (Feinrot)
+//
+// Layout (A4 Hochformat empfohlen):
+//   - Headline: linksbuendig, gross, MiloSerifOT-Text
+//   - oben rechts: Wortmarke (EPS) als Bildrahmen
+//   - unten rechts: Bildmarke (EPS) als Bildrahmen
+//   - unten links: Kunde / Datum / Kontakt (Label = MiloOT-Bold,
+//     Wert = MiloSerifOT)
+//
+// Die EPS-Dateien werden als Bildrahmen platziert UND zusaetzlich im
+// Links/-Ordner des ZIP-Pakets mitgeliefert. Die Schriften liegen in
+// "Document fonts/" und werden von InDesign beim Oeffnen erkannt.
+// =====================================================================
+
+export type PresentationAsset = {
+  /** Dateiname inkl. Endung, z.B. "fr_logo_rechts_1c.eps". */
+  name: string;
+  /** Binaerinhalt (EPS, AI, PDF, ...). */
+  data: ArrayBuffer | Uint8Array;
+};
+
+export type PresentationFontStyle = "Regular" | "Bold" | "Italic" | "Bold Italic";
+
+export type PresentationFont = {
+  /** Anzeigename / FontFamily, z.B. "MiloSerifOT". */
+  family: string;
+  /** Welcher Schnitt der Datei entspricht (Default "Regular"). */
+  style?: PresentationFontStyle;
+  /** Originaldateiname inkl. Endung, z.B. "MiloSerifOT-Text.otf". */
+  fileName: string;
+  /** Binaerinhalt (otf/ttf). */
+  data: ArrayBuffer | Uint8Array;
+};
+
+export type GeneratePresentationIdmlOptions = {
+  /** Hauptueberschrift, frei eingebbar. */
+  headline: string;
+  /** Firmierung des Kunden, wird neben dem Label "Kunde" gesetzt. */
+  customer: string;
+  /** Datum als bereits formatierter String, z.B. "01.05.2026". */
+  date: string;
+  /** Name des Projektmanagers / Kontakts. */
+  contact: string;
+  /**
+   * Schriften (Headline / Label / Body). Werden zusaetzlich in
+   * "Document fonts/" abgelegt.
+   */
+  headlineFont: PresentationFont;
+  labelFont: PresentationFont;
+  bodyFont: PresentationFont;
+  /** Wortmarke (oben rechts). Optional. */
+  wordmark?: PresentationAsset;
+  /** Bildmarke (unten rechts). Optional. */
+  picturemark?: PresentationAsset;
+  /** Seitengroesse (Default A4 Hochformat). */
+  pageSize?: IdmlPageSize;
+};
+
+function buildPresentationFontsXml(fonts: PresentationFont[]): string {
+  const familyMap = new Map<string, PresentationFont[]>();
+  for (const f of fonts) {
+    const family = sanitizeFontFamily(f.family);
+    const existing = familyMap.get(family) ?? [];
+    existing.push(f);
+    familyMap.set(family, existing);
+  }
+  const familyBlocks: string[] = [];
+  for (const [family, list] of familyMap.entries()) {
+    const fontEntries = list
+      .map((f) => {
+        const style = f.style ?? "Regular";
+        const styleEnc = encodeURIComponent(style)
+          .replace(/[!'()*]/g, (c) =>
+            `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+          );
+        const self = `Font/${xmlEscape(family)}%3c${styleEnc}%3e`;
+        const psName = `${family}-${style}`;
+        return `\t\t<Font Self="${self}" FontFamily="${xmlEscape(family)}" Name="${xmlEscape(family)} ${xmlEscape(style)}" PostScriptName="${xmlEscape(psName)}" Status="Installed" FontStyleName="${xmlEscape(style)}" FontType="OpenTypeCFF" WritingScript="0"/>`;
+      })
+      .join("\n");
+    familyBlocks.push(
+      `\t<FontFamily Self="FontFamily/${xmlEscape(family)}" Name="${xmlEscape(family)}">
+${fontEntries}
+\t</FontFamily>`
+    );
+  }
+  return `${XML_HEADER}
+<idPkg:Fonts ${IDPKG_NS} DOMVersion="${DOM_VERSION}">
+${familyBlocks.join("\n")}
+</idPkg:Fonts>`;
+}
+
+function buildEmptyGraphicRectangle(
+  self: string,
+  pageX: number,
+  pageY: number,
+  w: number,
+  h: number,
+  pageH: number
+): PageItemXml {
+  const cx = pageX + w / 2;
+  const cy = pageY + h / 2 - pageH / 2;
+  return `\t\t<Rectangle Self="${self}" ItemLayer="layer1" Name="$ID/" Visible="true" GradientFillStart="0 0" GradientFillLength="0" GradientFillAngle="0" GradientStrokeStart="0 0" GradientStrokeLength="0" GradientStrokeAngle="0" ItemTransform="1 0 0 1 ${cx} ${cy}" StrokeWeight="0" StrokeColor="Swatch/None" FillColor="Swatch/None" ContentType="GraphicType" OverriddenPageItemProps="" HorizontalLayoutConstraints="FlexibleDimension FixedDimension FlexibleDimension" VerticalLayoutConstraints="FlexibleDimension FixedDimension FlexibleDimension">
+\t\t\t<Properties>
+\t\t\t\t<PathGeometry>
+\t\t\t\t\t<GeometryPathType PathOpen="false">
+${rectPointArray(w, h)}
+\t\t\t\t\t</GeometryPathType>
+\t\t\t\t</PathGeometry>
+\t\t\t</Properties>
+\t\t\t<FrameFittingOption AutoFit="true" FittingOnEmptyFrame="ProportionallyFillFrame"/>
+\t\t</Rectangle>`;
+}
+
+type PresentationSpreadResult = {
+  spreadXml: string;
+  storyFiles: { path: string; xml: string }[];
+  storySelfs: string[];
+};
+
+function buildPresentationSpread(params: {
+  spreadSelf: string;
+  pageSelf: string;
+  masterSelf: string;
+  pageSize: IdmlPageSize;
+  options: GeneratePresentationIdmlOptions;
+}): PresentationSpreadResult {
+  const { spreadSelf, pageSelf, masterSelf, pageSize, options } = params;
+  const w = pageSize.widthPt;
+  const h = pageSize.heightPt;
+
+  const items: PageItemXml[] = [];
+  const storyFiles: { path: string; xml: string }[] = [];
+  const storySelfs: string[] = [];
+
+  const margin = mmToPt(15);
+
+  // ---- Wortmarke oben rechts -----------------------------------------
+  if (options.wordmark) {
+    const wmW = mmToPt(50);
+    const wmH = mmToPt(16);
+    const wmX = w - margin - wmW;
+    const wmY = margin;
+    items.push(
+      buildEmptyGraphicRectangle("frame_wordmark", wmX, wmY, wmW, wmH, h)
+    );
+  }
+
+  // ---- Bildmarke unten rechts ----------------------------------------
+  if (options.picturemark) {
+    const pmW = mmToPt(28);
+    const pmH = mmToPt(28);
+    const pmX = w - margin - pmW;
+    const pmY = h - margin - pmH;
+    items.push(
+      buildEmptyGraphicRectangle("frame_picturemark", pmX, pmY, pmW, pmH, h)
+    );
+  }
+
+  // ---- Headline -------------------------------------------------------
+  const headlineX = margin;
+  const headlineW = w - 2 * margin;
+  const headlineH = mmToPt(80);
+  // Vertikal etwas unterhalb der Mitte, damit das Logo Luft hat.
+  const headlineY = h * 0.35 - headlineH / 2;
+  const headlineFontSize = Math.min(72, Math.max(40, w / 14));
+  const headlineFamily = sanitizeFontFamily(options.headlineFont.family);
+  const headlineStyle = options.headlineFont.style ?? "Regular";
+  const headlineStorySelf = "story_headline";
+  storySelfs.push(headlineStorySelf);
+  storyFiles.push({
+    path: `Stories/Story_${headlineStorySelf}.xml`,
+    xml: buildStoryXml(headlineStorySelf, [
+      {
+        pointSize: headlineFontSize,
+        leading: Math.round(headlineFontSize * 1.1),
+        appliedFont: headlineFamily,
+        fontStyle: headlineStyle,
+        lines: (options.headline || "Headline").split(/\r?\n/),
+      },
+    ]),
+  });
+  items.push(
+    buildTextFrame(
+      "frame_headline",
+      headlineStorySelf,
+      headlineX,
+      headlineY,
+      headlineW,
+      headlineH,
+      h
+    )
+  );
+
+  // ---- Footer-Block unten links --------------------------------------
+  // Drei Zeilen: Kunde / Datum / Kontakt.
+  // Label = labelFont (Bold), Wert = bodyFont (Regular Serif).
+  const labelFamily = sanitizeFontFamily(options.labelFont.family);
+  const labelStyle = options.labelFont.style ?? "Bold";
+  const bodyFamily = sanitizeFontFamily(options.bodyFont.family);
+  const bodyStyle = options.bodyFont.style ?? "Regular";
+
+  const footerRows: { label: string; value: string }[] = [
+    { label: "Kunde", value: options.customer || "—" },
+    { label: "Datum", value: options.date || "—" },
+    { label: "Kontakt", value: options.contact || "—" },
+  ];
+
+  const footerLabelW = mmToPt(28);
+  const footerGutter = mmToPt(4);
+  const footerValueW = mmToPt(80);
+  const footerRowH = mmToPt(6);
+  const footerBlockH = footerRowH * footerRows.length;
+  const footerLeft = margin;
+  // Bottom-Aligned mit zusaetzlichem Abstand zur Kante.
+  const footerTop = h - margin - footerBlockH;
+
+  footerRows.forEach((row, idx) => {
+    const rowTop = footerTop + idx * footerRowH;
+
+    const labelStorySelf = `story_footer_label_${idx}`;
+    storySelfs.push(labelStorySelf);
+    storyFiles.push({
+      path: `Stories/Story_${labelStorySelf}.xml`,
+      xml: buildStoryXml(labelStorySelf, [
+        {
+          pointSize: 9,
+          leading: 12,
+          appliedFont: labelFamily,
+          fontStyle: labelStyle,
+          lines: [row.label],
+        },
+      ]),
+    });
+    items.push(
+      buildTextFrame(
+        `frame_footer_label_${idx}`,
+        labelStorySelf,
+        footerLeft,
+        rowTop,
+        footerLabelW,
+        footerRowH,
+        h
+      )
+    );
+
+    const valueStorySelf = `story_footer_value_${idx}`;
+    storySelfs.push(valueStorySelf);
+    storyFiles.push({
+      path: `Stories/Story_${valueStorySelf}.xml`,
+      xml: buildStoryXml(valueStorySelf, [
+        {
+          pointSize: 9,
+          leading: 12,
+          appliedFont: bodyFamily,
+          fontStyle: bodyStyle,
+          lines: [row.value],
+        },
+      ]),
+    });
+    items.push(
+      buildTextFrame(
+        `frame_footer_value_${idx}`,
+        valueStorySelf,
+        footerLeft + footerLabelW + footerGutter,
+        rowTop,
+        footerValueW,
+        footerRowH,
+        h
+      )
+    );
+  });
+
+  const spreadXml = `${XML_HEADER}
+<idPkg:Spread ${IDPKG_NS} DOMVersion="${DOM_VERSION}">
+\t<Spread Self="${spreadSelf}" FlattenerOverride="Default" AllowPageShuffle="true" ItemTransform="1 0 0 1 0 0" ShowMasterItems="true" PageCount="1" BindingLocation="0" PageTransitionType="None" PageTransitionDirection="NotApplicable" PageTransitionDuration="Medium">
+\t\t<FlattenerPreference LineArtAndTextResolution="300" GradientAndMeshResolution="150" ClipComplexRegions="false" ConvertAllStrokesToOutlines="false" ConvertAllTextToOutlines="false">
+\t\t\t<Properties>
+\t\t\t\t<RasterVectorBalance type="double">50</RasterVectorBalance>
+\t\t\t</Properties>
+\t\t</FlattenerPreference>
+\t\t<Page Self="${pageSelf}" GeometricBounds="0 0 ${h} ${w}" ItemTransform="1 0 0 1 0 ${-h / 2}" Name="1" AppliedTrapPreset="TrapPreset/$ID/kDefaultTrapStyleName" OverrideList="" AppliedMaster="${masterSelf}" MasterPageTransform="1 0 0 1 0 0" TabOrder="" GridStartingPoint="TopOutside" UseMasterGrid="true">
+\t\t\t<Properties>
+\t\t\t\t<Descriptor type="list">
+\t\t\t\t\t<ListItem type="string"></ListItem>
+\t\t\t\t\t<ListItem type="enumeration">Arabic</ListItem>
+\t\t\t\t\t<ListItem type="boolean">true</ListItem>
+\t\t\t\t\t<ListItem type="boolean">false</ListItem>
+\t\t\t\t\t<ListItem type="long">1</ListItem>
+\t\t\t\t\t<ListItem type="string"></ListItem>
+\t\t\t\t</Descriptor>
+\t\t\t\t<PageColor type="enumeration">UseMasterColor</PageColor>
+\t\t\t</Properties>
+\t\t\t<MarginPreference ColumnCount="1" ColumnGutter="12" Top="36" Bottom="36" Left="36" Right="36" ColumnDirection="Horizontal"/>
+\t\t</Page>
+${items.join("\n")}
+\t</Spread>
+</idPkg:Spread>`;
+
+  return { spreadXml, storyFiles, storySelfs };
+}
+
+/**
+ * Generiert die reine .idml fuer die Praesentations-Vorlage (ohne
+ * mitgelieferte Schriften / Logos). Wird intern von
+ * `generatePresentationIdmlPackage` verwendet.
+ */
+export async function generatePresentationIdml(
+  options: GeneratePresentationIdmlOptions
+): Promise<Blob> {
+  const pageSize: IdmlPageSize =
+    options.pageSize ?? buildPageSizeFromMm(210, 297, "portrait");
+
+  const zip = new JSZip();
+  zip.file("mimetype", buildMimetype(), { compression: "STORE" });
+  zip.file("META-INF/container.xml", buildContainerXml());
+
+  const spreadSelf = "spread1";
+  const masterSelf = "master1";
+  const layerSelf = "layer1";
+  const backingStorySelf = "story1";
+  const masterPageSelf = "masterpage1";
+  const spreadPageSelf = spreadSelfToPageId(spreadSelf);
+
+  const { spreadXml, storyFiles, storySelfs } = buildPresentationSpread({
+    spreadSelf,
+    pageSelf: spreadPageSelf,
+    masterSelf,
+    pageSize,
+    options,
+  });
+
+  zip.file(
+    "designmap.xml",
+    buildDesignmapXml({
+      spreadSelf,
+      masterSelf,
+      layerSelf,
+      backingStorySelf,
+      storySelfs,
+    })
+  );
+
+  // Keine eigenen Farbeintraege noetig (Black/Paper reichen aus).
+  zip.file("Resources/Graphic.xml", buildGraphicXml([]));
+  zip.file(
+    "Resources/Fonts.xml",
+    buildPresentationFontsXml([
+      options.headlineFont,
+      options.labelFont,
+      options.bodyFont,
+    ])
+  );
+  zip.file("Resources/Styles.xml", buildStylesXml());
+  zip.file("Resources/Preferences.xml", buildPreferencesXml(pageSize));
+
+  zip.file(
+    `MasterSpreads/MasterSpread_${masterSelf}.xml`,
+    buildMasterSpreadXml(masterSelf, masterPageSelf, pageSize)
+  );
+  zip.file(`Spreads/Spread_${spreadSelf}.xml`, spreadXml);
+
+  for (const sf of storyFiles) {
+    zip.file(sf.path, sf.xml);
+  }
+
+  zip.file("XML/BackingStory.xml", buildBackingStoryXml(backingStorySelf));
+  zip.file("XML/Tags.xml", buildTagsXml());
+
+  return zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.adobe.indesign-idml-package",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+}
+
+export function suggestPresentationIdmlFilename(brandName: string): string {
+  const base =
+    brandName
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Za-z0-9-_]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "brand";
+  return `${base}-praesentation.idml`;
+}
+
+export function suggestPresentationPackageFilename(brandName: string): string {
+  const base =
+    brandName
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Za-z0-9-_]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "brand";
+  return `${base}-praesentation.zip`;
+}
+
+/**
+ * Erstellt das komplette Praesentations-Paket:
+ *   - <brand>-praesentation.idml
+ *   - Document fonts/<Family>/<file>.otf  (3 Schriften)
+ *   - Links/<wortmarke|bildmarke>.eps     (2 Vektor-Logos)
+ *   - README.txt mit Hinweis auf das manuelle Platzieren der EPS.
+ *
+ * Der Designer oeffnet die .idml in InDesign, die Schriften werden aus
+ * "Document fonts/" automatisch erkannt. Die EPS-Dateien koennen per
+ * Datei → Verknuepfung wiederherstellen oder Datei → Platzieren in die
+ * vorbereiteten Bildrahmen oben rechts und unten rechts gesetzt werden.
+ */
+export async function generatePresentationIdmlPackage(
+  brandName: string,
+  options: GeneratePresentationIdmlOptions
+): Promise<Blob> {
+  const idmlBlob = await generatePresentationIdml(options);
+  const idmlBuffer = await idmlBlob.arrayBuffer();
+
+  const zip = new JSZip();
+  zip.file(suggestPresentationIdmlFilename(brandName), idmlBuffer);
+
+  // Schriften (Document fonts/<Family>/<file>) — InDesign erkennt das
+  // Document-fonts-Verzeichnis beim Oeffnen des IDML automatisch.
+  const fontsRoot = zip.folder("Document fonts");
+  if (fontsRoot) {
+    const collected = new Map<string, PresentationFont[]>();
+    for (const font of [
+      options.headlineFont,
+      options.labelFont,
+      options.bodyFont,
+    ]) {
+      const folder = sanitizeFolderName(font.family);
+      const list = collected.get(folder) ?? [];
+      // Doppelte Dateinamen pro Family vermeiden.
+      if (!list.some((f) => f.fileName === font.fileName)) {
+        list.push(font);
+      }
+      collected.set(folder, list);
+    }
+    for (const [folder, list] of collected.entries()) {
+      const sub = fontsRoot.folder(folder);
+      if (!sub) continue;
+      for (const f of list) {
+        sub.file(f.fileName, f.data);
+      }
+    }
+  }
+
+  // EPS-Logos in Links/.
+  const linksRoot = zip.folder("Links");
+  if (linksRoot) {
+    if (options.wordmark) {
+      linksRoot.file(options.wordmark.name, options.wordmark.data);
+    }
+    if (options.picturemark) {
+      linksRoot.file(options.picturemark.name, options.picturemark.data);
+    }
+  }
+
+  zip.file(
+    "README.txt",
+    `Praesentations-Vorlage – Hinweise\n` +
+      `--------------------------------\n` +
+      `\n` +
+      `1. Oeffne die Datei "${suggestPresentationIdmlFilename(brandName)}"\n` +
+      `   in Adobe InDesign. Die mitgelieferten Schriften unter\n` +
+      `   "Document fonts/" werden automatisch erkannt.\n` +
+      `\n` +
+      `2. Platziere die beiden EPS-Dateien aus dem Ordner "Links/" in\n` +
+      `   die vorbereiteten Bildrahmen:\n` +
+      (options.wordmark
+        ? `   - "${options.wordmark.name}" oben rechts (Wortmarke)\n`
+        : "") +
+      (options.picturemark
+        ? `   - "${options.picturemark.name}" unten rechts (Bildmarke)\n`
+        : "") +
+      `\n` +
+      `   Datei → Platzieren … (Cmd/Strg+D), den jeweiligen Rahmen\n` +
+      `   anklicken, dann die EPS auswaehlen.\n`
+  );
+
+  return zip.generateAsync({
+    type: "blob",
+    mimeType: "application/zip",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+}
