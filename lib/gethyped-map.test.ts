@@ -26,15 +26,19 @@ function event(patch: Partial<ScrapedEvent> = {}): ScrapedEvent {
   };
 }
 
-test("mappt heroImage auf image_url", () => {
+test("mappt Artwork bevorzugt auf image_url", () => {
   const mapped = mapScrapedEvent(event());
   assert.equal(mapped.ok, true);
   if (!mapped.ok) return;
   assert.equal(
     mapped.event.image_url,
+    "https://www.eventim.de/obj/media/DE-eventim/teaser/artworks/2025/pur-tickets-header.jpg"
+  );
+  assert.equal(
+    mapped.event.raw?.heroImage,
     "https://www.eventim.de/obj/media/DE-eventim/teaser/222x222/2025/pur-tickets-2025.jpg"
   );
-  assert.equal(mapped.event.raw?.heroImage, mapped.event.image_url);
+  assert.equal(mapped.event.raw?.artworkImage, mapped.event.image_url);
 });
 
 test("lässt Events ohne Bild durch, setzt image_url dann nicht", () => {

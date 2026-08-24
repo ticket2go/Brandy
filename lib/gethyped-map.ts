@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 
+import { rewriteListingToArtwork } from "@/lib/eventim-artwork";
 import { eventKey, type ScrapedEvent } from "@/lib/scraped-event";
 
 export type GethypedLocation = {
@@ -89,7 +90,8 @@ export function mapScrapedEvent(event: ScrapedEvent): MappedGethyped {
     return skip(name, "Kein Veranstaltungsort.");
   }
 
-  const imageUrl = publicUrl(event.heroImage);
+  const artworkUrl = preferredArtworkUrl(event.heroImage);
+  const imageUrl = artworkUrl ?? publicUrl(event.heroImage);
   const ticketUrl = publicUrl(event.ticketUrl);
   const priceFrom = parsePrice(event.price);
 
@@ -99,7 +101,7 @@ export function mapScrapedEvent(event: ScrapedEvent): MappedGethyped {
     start: start.iso,
     location,
     source_updated_at: new Date().toISOString(),
-    raw: compactRaw(event),
+    raw: compactRaw(event, artworkUrl),
   };
   if (!start.timeKnown) payload.start_time_known = false;
   if (imageUrl) payload.image_url = imageUrl;
@@ -202,9 +204,20 @@ export function parsePrice(value: string | null): number | null {
   return amount;
 }
 
-function compactRaw(event: ScrapedEvent): Record<string, unknown> {
+function preferredArtworkUrl(heroImage: string | null): string | undefined {
+  const listing = publicUrl(heroImage);
+  if (!listing) return undefined;
+  if (/\/teaser\/artworks\//i.test(listing)) return listing;
+  return publicUrl(rewriteListingToArtwork(listing)) ?? listing;
+}
+
+function compactRaw(
+  event: ScrapedEvent,
+  artworkUrl?: string
+): Record<string, unknown> {
   return {
     heroImage: event.heroImage,
+    artworkImage: artworkUrl ?? null,
     ticketUrl: event.ticketUrl,
     productGroupId: event.productGroupId ?? null,
     city: event.city,

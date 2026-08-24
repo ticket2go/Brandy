@@ -4,17 +4,13 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import FollowUpStatus from "@/components/FollowUpStatus";
+import GethypedTokenField from "@/components/GethypedTokenField";
 import IngestStatus from "@/components/IngestStatus";
 import ScraperPreview from "@/components/ScraperPreview";
 import SearchStatus from "@/components/SearchStatus";
 import Title from "@/components/Title";
 import UpdateStatus from "@/components/UpdateStatus";
-import {
-  gethypedConfigured,
-  ingestToGethyped,
-  loadGethypedToken,
-  saveGethypedToken,
-} from "@/lib/gethyped-ingest";
+import { ingestToGethyped, loadGethypedToken } from "@/lib/gethyped-ingest";
 import { canResumeFollowUp, followUpProgressOf } from "@/lib/follow-up";
 import {
   makeSearchProgress,
@@ -44,8 +40,6 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
   const [following, setFollowing] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [ingesting, setIngesting] = useState(false);
-  const [token, setToken] = useState("");
-  const [tokenNeeded, setTokenNeeded] = useState(true);
   const [searchProgress, setSearchProgress] = useState<SearchProgress | null>(
     null
   );
@@ -76,13 +70,6 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
       cancelled = true;
     };
   }, [id]);
-
-  useEffect(() => {
-    setToken(loadGethypedToken());
-    void gethypedConfigured().then((configured) => {
-      setTokenNeeded(!configured);
-    });
-  }, []);
 
   useEffect(() => {
     if (!scraper || autoLoad.current) return;
@@ -181,10 +168,9 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
     const events =
       scraper.preview.length > 0 ? scraper.preview : scraper.events;
     if (events.length === 0) return;
-    saveGethypedToken(token);
     setIngesting(true);
     try {
-      const ingest = await ingestToGethyped(events, token);
+      const ingest = await ingestToGethyped(events, loadGethypedToken());
       persist(updateScraper(scraper.id, { lastIngest: ingest }));
     } catch (error) {
       persist(
@@ -339,19 +325,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             </button>
           </div>
         </div>
-        {tokenNeeded ? (
-          <label className="mt-3 flex max-w-xl flex-col gap-1 text-sm text-black/60">
-            GetHyped-Token
-            <input
-              type="password"
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              placeholder="Bearer-Token der Event-Quelle"
-              autoComplete="off"
-              className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black/30"
-            />
-          </label>
-        ) : null}
+        <GethypedTokenField className="mt-3" />
       </header>
 
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6">

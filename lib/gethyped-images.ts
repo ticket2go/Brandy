@@ -16,38 +16,53 @@ export type PreparedImages = {
 };
 
 /**
- * GetHyped lädt image_url selbst herunter. Eventim-Teaser (222×222)
- * werden oft verworfen, und manche GetHyped-Server erreichen Eventim nicht.
- * Deshalb zuerst ein großes Artwork wählen und das Bild öffentlich ablegen.
+ * image_url ist Pflicht für die Qualität bei GetHyped.
+ * Artwork-Header hat Vorrang vor 222er-Teasern; fehlt das Bild,
+ * wird es aus Rohdaten (heroImage, Name, Ticketlink) nachgezogen.
  */
 export async function prepareGethypedImages(
   events: GethypedEvent[]
 ): Promise<PreparedImages> {
-  const originals = uniqueUrls(events.map((event) => event.image_url));
-  const resolved = new Map<string, string>();
+  const jobs = new Map<string, { listing: string | null; extra: Extra }>();
+  for (const event of events) {
+    const extra = extraOf(event);
+    const listing = extra.listing;
+    const key = jobKey(listing, extra);
+    if (!jobs.has(key)) jobs.set(key, { listing, extra });
+  }
+
+  const resolved = new Map<string, string | null>();
   let upgraded = 0;
   let rehosted = 0;
+  const entries = [...jobs.entries()];
 
-  for (let index = 0; index < originals.length; index += CONCURRENCY) {
+  for (let index = 0; index < entries.length; index += CONCURRENCY) {
     await Promise.all(
-      originals.slice(index, index + CONCURRENCY).map(async (url) => {
-        const best = (await upgradeHeroForPublish(url)) ?? url;
-        if (best !== url) upgraded += 1;
-        const hosted = await rehostImage(best);
+      entries.slice(index, index + CONCURRENCY).map(async ([key, job]) => {
+        const best = await upgradeHeroForPublish(job.listing, {
+          name: job.extra.name,
+          startsAt: job.extra.startsAt,
+          ticketUrl: job.extra.ticketUrl,
+          fetchPage: false,
+          quick: false,
+        });
+        if (best && job.listing && best !== job.listing) upgraded += 1;
+        const hosted = best ? await rehostImage(best) : null;
         if (hosted) {
           rehosted += 1;
-          resolved.set(url, hosted);
+          resolved.set(key, hosted);
           return;
         }
-        resolved.set(url, best);
+        resolved.set(key, best);
       })
     );
   }
 
   const next = events.map((event) => {
-    if (!event.image_url) return event;
-    const imageUrl = resolved.get(event.image_url);
-    return imageUrl ? { ...event, image_url: imageUrl } : event;
+    const extra = extraOf(event);
+    const imageUrl = resolved.get(jobKey(extra.listing, extra));
+    if (!imageUrl) return event;
+    return { ...event, image_url: imageUrl };
   });
 
   return {
@@ -56,6 +71,32 @@ export async function prepareGethypedImages(
     upgraded,
     rehosted,
   };
+}
+
+type Extra = {
+  listing: string | null;
+  name: string;
+  startsAt: string;
+  ticketUrl: string | null;
+};
+
+function extraOf(event: GethypedEvent): Extra {
+  const raw = event.raw ?? {};
+  return {
+    listing:
+      asText(raw.heroImage) ??
+      asText(event.image_url) ??
+      asText(raw.artworkImage) ??
+      null,
+    name: event.name,
+    startsAt: event.start,
+    ticketUrl: asText(raw.ticketUrl) ?? event.ticket_url ?? null,
+  };
+}
+
+function jobKey(listing: string | null, extra: Extra): string {
+  if (listing) return `img:${listing}`;
+  return `meta:${extra.name}|${extra.ticketUrl ?? ""}|${extra.startsAt}`;
 }
 
 async function rehostImage(source: string): Promise<string | null> {
@@ -136,12 +177,10 @@ async function remoteOk(url: string): Promise<boolean> {
   }
 }
 
-function uniqueUrls(values: Array<string | undefined>): string[] {
-  const out: string[] = [];
-  for (const value of values) {
-    if (value && !out.includes(value)) out.push(value);
-  }
-  return out;
+function asText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text ? text : null;
 }
 
 function extensionOf(contentType: string, url: string): string {

@@ -119,12 +119,11 @@ export async function resolveHeroImage(
   listing: string | null,
   extra?: HeroExtra
 ): Promise<string | null> {
-  const direct = withoutListingThumb(listing);
-  if (direct) return direct;
   const cacheKey = `${listing ?? ""}|${extra?.name ?? ""}|${extra?.ticketUrl ?? ""}|${extra?.fetchPage !== false}|${extra?.quick === true}`;
   if (heroCache.has(cacheKey)) return heroCache.get(cacheKey) ?? null;
 
-  let found = await firstExisting(listingSizeVariants(listing));
+  // Artwork-Header hat Vorrang vor Teaser-Größen und 222er-Listenbildern.
+  let found = await firstExisting(publishHeroCandidates(listing));
   if (!found) {
     found = await firstExisting(heroImageCandidates(listing, extra));
   }
@@ -233,14 +232,15 @@ export function publishHeroCandidates(listing: string | null): string[] {
 }
 
 export async function upgradeHeroForPublish(
-  listing: string | null
+  listing: string | null,
+  extra?: HeroExtra
 ): Promise<string | null> {
-  if (!listing) return null;
-  if (!isListingThumb(listing) && !/\/teaser\/\d+x\d+\//i.test(listing)) {
-    return listing;
-  }
-  const found = await firstExisting(publishHeroCandidates(listing));
-  return found ?? listing;
+  if (!listing && !extra?.name && !extra?.ticketUrl) return null;
+  return resolveHeroImage(listing, {
+    ...extra,
+    fetchPage: extra?.fetchPage ?? false,
+    quick: extra?.quick ?? false,
+  });
 }
 
 function rewriteListingToTeasers(listing: string | null): string[] {

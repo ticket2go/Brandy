@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import ConfirmDialog from "./ConfirmDialog";
+import GethypedTokenField from "./GethypedTokenField";
 import ScraperCard from "./ScraperCard";
 import {
   ingestToGethyped,
@@ -342,6 +343,7 @@ export default function ScraperManager() {
       </button>
 
       <section className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6">
+        <GethypedTokenField />
         {!ready ? (
           <p className="text-sm text-black/50">Lade …</p>
         ) : scrapers.length > 0 ? (
