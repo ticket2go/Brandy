@@ -306,7 +306,9 @@ async function scrapeOneFollowUpGroup(
     params.set("product_group_id", groupId);
   });
   const source = follow.events.length > 1 ? follow.events : originals;
-  const artwork = await artworkImageForGroup(originals, source, pageUrl);
+  const artwork =
+    (await artworkImageForGroup(originals, source, pageUrl)) ??
+    (await fallbackArtworkImage(originals[0]?.heroImage ?? null));
   return source.map((event) =>
     withDisplayFields({
       ...event,
@@ -315,6 +317,44 @@ async function scrapeOneFollowUpGroup(
       productGroupId: groupId,
     })
   );
+}
+
+function headerImageFrom(listing: string | null): string | null {
+  if (!listing) return null;
+  if (!/\/teaser\/\d+x\d+\//i.test(listing)) return null;
+  let next = listing.replace(/\/teaser\/\d+x\d+\//i, "/teaser/artworks/");
+  if (/-tickets-\d+\.(jpe?g|png|webp)$/i.test(next)) {
+    next = next.replace(/-tickets-\d+\.(jpe?g|png|webp)$/i, "-tickets-header.$1");
+  } else {
+    next = next.replace(/-\d{4}\.(jpe?g|png|webp)$/i, "-header.$1");
+  }
+  return next === listing ? null : next;
+}
+
+async function fallbackArtworkImage(
+  listing: string | null
+): Promise<string | null> {
+  const guessed = headerImageFrom(listing);
+  if (!guessed) return null;
+  return (await imageExists(guessed)) ? guessed : null;
+}
+
+async function imageExists(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+      headers:
+        typeof window === "undefined"
+          ? { accept: "image/*,*/*;q=0.8" }
+          : { accept: "image/*,*/*;q=0.8", "accept-language": "de-DE,de;q=0.9" },
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function artworkImageForGroup(

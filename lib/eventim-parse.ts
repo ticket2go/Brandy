@@ -318,19 +318,49 @@ function classFragments(html: string, className: string): string[] {
 }
 
 function imageFromFragment(html: string, origin: string): string | null {
-  const tagged =
-    firstAttr(html, "img", "src") ??
-    firstAttr(html, "img", "data-src") ??
-    firstAttr(html, "img", "data-original") ??
-    firstSrcset(html, "img") ??
-    firstSrcset(html, "source") ??
-    firstAttr(html, "source", "src");
-  if (tagged) return absolute(tagged, origin);
+  const candidates: Array<{ url: string; score: number }> = [];
+  const add = (value: string | null, width = 0) => {
+    const url = absolute(value, origin);
+    if (!url) return;
+    candidates.push({ url, score: imageScore(url, width) });
+  };
+
+  for (const tag of ["source", "img"]) {
+    addSrcset(html, tag, add);
+    add(firstAttr(html, tag, "src"));
+    add(firstAttr(html, tag, "data-src"));
+    add(firstAttr(html, tag, "data-original"));
+  }
 
   const background = html.match(
     /background(?:-image)?\s*:\s*url\(\s*['"]?([^'")\s]+)['"]?\s*\)/i
   );
-  return absolute(background?.[1] ?? null, origin);
+  add(background?.[1] ?? null, 800);
+
+  candidates.sort((left, right) => right.score - left.score);
+  return candidates[0]?.url ?? null;
+}
+
+function addSrcset(
+  html: string,
+  tag: string,
+  add: (value: string | null, width?: number) => void
+) {
+  const raw =
+    firstAttr(html, tag, "srcset") ?? firstAttr(html, tag, "data-srcset");
+  if (!raw) return;
+  for (const part of raw.split(",")) {
+    const [url, size] = part.trim().split(/\s+/, 2);
+    const width = Number.parseInt(size ?? "", 10);
+    add(url ?? null, Number.isFinite(width) ? width : 0);
+  }
+}
+
+function imageScore(url: string, width: number): number {
+  let score = width;
+  if (/artworks|[-_/]header/i.test(url)) score += 10000;
+  if (/\/\d{2,3}x\d{2,3}\//.test(url)) score -= 5000;
+  return score;
 }
 
 function firstAttr(html: string, tag: string, name: string): string | null {
@@ -341,24 +371,6 @@ function firstAttr(html: string, tag: string, name: string): string | null {
     if (value && !value.startsWith("data:")) return value;
   }
   return null;
-}
-
-function firstSrcset(html: string, tag: string): string | null {
-  const raw = firstAttr(html, tag, "srcset") ?? firstAttr(html, tag, "data-srcset");
-  if (!raw) return null;
-  let best: string | null = null;
-  let bestWidth = -1;
-  for (const part of raw.split(",")) {
-    const [url, size] = part.trim().split(/\s+/, 2);
-    if (!url) continue;
-    const width = Number.parseInt(size ?? "", 10);
-    const score = Number.isFinite(width) ? width : 0;
-    if (score >= bestWidth) {
-      best = url;
-      bestWidth = score;
-    }
-  }
-  return best;
 }
 
 function imageOf(value: unknown): string | null {
