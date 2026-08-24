@@ -25,6 +25,8 @@ const WEB_IDS: Record<string, string> = {
 
 const REQUEST_TIMEOUT_MS = 9000;
 const PAGE_SIZE = 50;
+const RANGE_CONCURRENCY = 4;
+const DATE_RANGE_YEARS = 4;
 
 export function isEventimUrl(rawUrl: string): boolean {
   try {
@@ -65,7 +67,7 @@ export async function scrapeEventim(rawUrl: string): Promise<ScrapeResult> {
     events: unique,
     warning:
       totalResults != null && totalResults > unique.length
-        ? `Die Preview zeigt die ersten ${unique.length} von ${totalResults} Einträgen der Seite.`
+        ? `Es wurden ${unique.length} von ${totalResults} Einträgen der Folgeseiten geladen.`
         : null,
   };
 }
@@ -82,7 +84,7 @@ async function fetchPageEvents(
     ];
     for (const key of keys) {
       try {
-        const grouped = await fetchProductList(pageUrl, (params) => {
+        const grouped = await fetchAllProductPages(pageUrl, (params) => {
           params.set("sort", "DateAsc");
           params.set(key, groupId);
         });
@@ -95,7 +97,7 @@ async function fetchPageEvents(
 
   const searchTerm = searchTermOf(pageUrl);
   if (searchTerm || cityOf(pageUrl) || isSearchPath(pageUrl)) {
-    return fetchProductList(pageUrl, (params) => {
+    return fetchAllProductPages(pageUrl, (params) => {
       params.set("sort", "Recommendation");
       if (searchTerm) params.set("search_term", searchTerm);
     });
@@ -148,20 +150,127 @@ function productGroupIdFromLink(link: string): string | null {
   }
 }
 
-async function fetchProductList(
+async function fetchAllProductPages(
   pageUrl: URL,
   apply: (params: URLSearchParams) => void
+): Promise<{ events: ScrapedEvent[]; totalResults: number | null }> {
+  const first = await fetchProductList(pageUrl, apply);
+  if (
+    first.totalResults == null ||
+    first.totalResults <= first.events.length
+  ) {
+    return first;
+  }
+
+  const from = addDays(berlinDate(), -7);
+  const to = addDays(from, DATE_RANGE_YEARS * 365);
+  const limit = createLimiter(RANGE_CONCURRENCY);
+  const paged = await walkDateRange(pageUrl, apply, from, to, limit);
+  return {
+    events: dedupeEvents([...first.events, ...paged]),
+    totalResults: first.totalResults,
+  };
+}
+
+async function fetchProductList(
+  pageUrl: URL,
+  apply: (params: URLSearchParams) => void,
+  dates?: { from: string; to: string }
 ): Promise<{ events: ScrapedEvent[]; totalResults: number | null }> {
   const params = baseParams(pageUrl);
   params.set("page", "1");
   params.set("top", String(PAGE_SIZE));
   apply(params);
+  if (dates) {
+    params.set("sort", "DateAsc");
+    params.set("date_from", dates.from);
+    params.set("date_to", dates.to);
+  }
   const payload = await fetchJson(PRODUCTS_URL, params, pageUrl);
   const record = asRecord(payload);
   return {
     events: eventsFromProducts(payload, pageUrl.origin),
     totalResults: asNumber(record?.totalResults),
   };
+}
+
+async function walkDateRange(
+  pageUrl: URL,
+  apply: (params: URLSearchParams) => void,
+  from: string,
+  to: string,
+  limit: <T>(fn: () => Promise<T>) => Promise<T>
+): Promise<ScrapedEvent[]> {
+  const page = await limit(() => fetchProductList(pageUrl, apply, { from, to }));
+  if (page.events.length === 0) return [];
+  if (
+    page.totalResults == null ||
+    page.totalResults <= page.events.length ||
+    from >= to
+  ) {
+    return page.events;
+  }
+
+  const mid = midDate(from, to);
+  const next = addDays(mid === from ? from : mid, 1);
+  if (next > to) return page.events;
+
+  const [left, right] = await Promise.all([
+    walkDateRange(pageUrl, apply, from, mid === from ? from : mid, limit),
+    walkDateRange(pageUrl, apply, next, to, limit),
+  ]);
+  return [...left, ...right];
+}
+
+function createLimiter(max: number) {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  const acquire = () =>
+    new Promise<void>((resolve) => {
+      if (active < max) {
+        active += 1;
+        resolve();
+        return;
+      }
+      waiting.push(() => {
+        active += 1;
+        resolve();
+      });
+    });
+  const release = () => {
+    active = Math.max(0, active - 1);
+    const next = waiting.shift();
+    if (next) next();
+  };
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    await acquire();
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  };
+}
+
+function berlinDate(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function addDays(iso: string, days: number): string {
+  const date = new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function midDate(from: string, to: string): string {
+  const start = Date.parse(`${from}T12:00:00Z`);
+  const end = Date.parse(`${to}T12:00:00Z`);
+  return new Date((start + end) / 2).toISOString().slice(0, 10);
 }
 
 function eventsFromProducts(payload: unknown, origin: string): ScrapedEvent[] {

@@ -32,7 +32,7 @@ export default function ScraperCard({
           </p>
           <p className="mt-1 text-[12px] text-white/50">
             {running
-              ? "Scraped …"
+              ? "Folgeseiten …"
               : scraper.entryCount === 1
                 ? "1 Event"
                 : `${scraper.entryCount} Events`}

@@ -130,7 +130,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
             </p>
             <p className="mt-1 text-sm text-black/60">
               {loading
-                ? "Seite wird geladen …"
+                ? "Seite und Folgeseiten werden geladen …"
                 : scraper.preview.length === 0
                   ? "Die Seite wird als Preview geladen."
                   : "Klicke Events und Felder an, die übernommen werden sollen."}
@@ -173,7 +173,7 @@ export default function ScraperDetail({ id }: ScraperDetailProps) {
         {scraper.preview.length === 0 ? (
           <p className="text-sm text-black/50">
             {loading
-              ? "Einträge werden von der Seite gelesen …"
+              ? "Einträge und Folgeseiten werden gelesen …"
               : "Noch keine Preview. Lade die Seite, um Einträge auszuwählen."}
           </p>
         ) : (
