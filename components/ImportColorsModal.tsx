@@ -16,6 +16,7 @@ import {
   type Cmyk,
 } from "@/lib/color";
 import { parseCclibsFile, type CclibsColor } from "@/lib/parseCclibs";
+import { normalizeWebsiteUrl } from "@/lib/websiteUrl";
 
 import Modal from "./Modal";
 
@@ -207,13 +208,11 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
     setError(null);
     setUrlResults(null);
     try {
-      const withProtocol = /^https?:\/\//i.test(trimmed)
-        ? trimmed
-        : `https://${trimmed}`;
+      const normalized = normalizeWebsiteUrl(trimmed);
       const response = await fetch("/api/extract-colors", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: withProtocol }),
+        body: JSON.stringify({ url: normalized }),
       });
       const data = (await response.json().catch(() => null)) as
         | { colors?: ExtractedColor[]; error?: string }
@@ -409,16 +408,23 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
         </div>
 
         {tab === "url" && (
-          <form onSubmit={handleGenerate} className="flex flex-col gap-2">
+          <form
+            onSubmit={handleGenerate}
+            noValidate
+            className="flex flex-col gap-2"
+          >
             <label className="flex flex-col gap-1 text-sm text-black/70">
-              Website-URL
+              Website oder Domain
               <div className="flex gap-2">
                 <input
-                  type="url"
+                  type="text"
                   inputMode="url"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={url}
                   onChange={(event) => setUrl(event.target.value)}
-                  placeholder="https://example.com"
+                  placeholder="example.com"
                   disabled={busy}
                   className="w-full rounded-lg border border-black/15 px-3 py-2 text-sm text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10"
                 />

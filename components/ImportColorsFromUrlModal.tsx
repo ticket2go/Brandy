@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { formatRgb, hexToRgb } from "@/lib/color";
+import { normalizeWebsiteUrl } from "@/lib/websiteUrl";
 
 import Modal from "./Modal";
 
@@ -96,13 +97,11 @@ export default function ImportColorsFromUrlModal({
     setError(null);
     setResults(null);
     try {
-      const withProtocol = /^https?:\/\//i.test(trimmed)
-        ? trimmed
-        : `https://${trimmed}`;
+      const normalized = normalizeWebsiteUrl(trimmed);
       const response = await fetch("/api/extract-colors", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: withProtocol }),
+        body: JSON.stringify({ url: normalized }),
       });
       const data = (await response.json().catch(() => null)) as
         | { colors?: ExtractedColor[]; error?: string }
@@ -207,16 +206,23 @@ export default function ImportColorsFromUrlModal({
       description="Fuege eine URL ein. Wir lesen die CSS-Dateien der Seite und schlagen gefundene Farben vor."
       widthClassName="max-w-2xl"
     >
-      <form onSubmit={handleGenerate} className="flex flex-col gap-4">
+      <form
+        onSubmit={handleGenerate}
+        noValidate
+        className="flex flex-col gap-4"
+      >
         <label className="flex flex-col gap-1 text-sm text-black/70">
-          Website-URL
+          Website oder Domain
           <div className="flex gap-2">
             <input
-              type="url"
+              type="text"
               inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               value={url}
               onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://example.com"
+              placeholder="example.com"
               disabled={loading || importing}
               className="w-full rounded-lg border border-black/15 px-3 py-2 text-sm text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10"
             />

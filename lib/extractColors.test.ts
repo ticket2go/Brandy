@@ -31,14 +31,25 @@ test("buildWebsiteFetchHeaders setzt Stylesheet-Header und Referer", () => {
   assert.equal(headers["sec-ch-ua-platform"], '"Windows"');
 });
 
-test("validatePublicUrl lehnt interne Hosts ab", () => {
-  assert.throws(() => validatePublicUrl("ftp://example.com"), /http\/https/);
-  assert.throws(() => validatePublicUrl("https://localhost/"), /private/);
-  assert.throws(() => validatePublicUrl("https://192.168.0.10/"), /private/);
+test("validatePublicUrl akzeptiert Domain ohne http und ohne www", () => {
+  assert.equal(validatePublicUrl("brand.example"), "https://brand.example/");
+  assert.equal(validatePublicUrl("www.brand.example"), "https://www.brand.example/");
+  assert.equal(
+    validatePublicUrl("brand.example/path"),
+    "https://brand.example/path"
+  );
   assert.equal(
     validatePublicUrl("https://brand.example/path"),
     "https://brand.example/path"
   );
+  assert.equal(validatePublicUrl("//brand.example"), "https://brand.example/");
+});
+
+test("validatePublicUrl lehnt interne Hosts ab", () => {
+  assert.throws(() => validatePublicUrl("ftp://example.com"), /http\/https/);
+  assert.throws(() => validatePublicUrl("https://localhost/"), /private/);
+  assert.throws(() => validatePublicUrl("https://192.168.0.10/"), /private/);
+  assert.throws(() => validatePublicUrl("localhost"), /private/);
 });
 
 test("extractColorsFromText erkennt hex, rgb, hsl und Namen", () => {
@@ -60,6 +71,25 @@ test("serializeColors sortiert nach Haeufigkeit", () => {
   const serialized = serializeColors(map);
   assert.equal(serialized[0]?.hex, "#111111");
   assert.equal(serialized[0]?.count, 2);
+});
+
+test("extractColorsFromWebsite akzeptiert Domain ohne Protokoll", async () => {
+  const originalFetch = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    urls.push(String(input));
+    return new Response(`<html><style>.x{color:#99AABB}</style></html>`, {
+      status: 200,
+    });
+  }) as typeof fetch;
+
+  try {
+    const map = await extractColorsFromWebsite("brand.example");
+    assert.ok((map.get("#99AABB")?.count ?? 0) >= 1);
+    assert.ok(urls[0]?.startsWith("https://brand.example"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("extractColorsFromWebsite nutzt Browser-Headers", async () => {

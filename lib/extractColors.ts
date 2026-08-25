@@ -1,4 +1,7 @@
 import { clamp, rgbToHex } from "./color";
+import { normalizeWebsiteUrl } from "./websiteUrl";
+
+export { normalizeWebsiteUrl };
 
 const MAX_CSS_FILES = 20;
 const MAX_FETCH_BYTES = 2_000_000;
@@ -359,10 +362,11 @@ function isLikelyPrivateHost(hostname: string): boolean {
 }
 
 export function validatePublicUrl(raw: string): string {
-  if (!isHttpUrl(raw)) {
+  const candidate = normalizeWebsiteUrl(raw);
+  if (!isHttpUrl(candidate)) {
     throw new Error("Nur http/https-URLs werden unterstuetzt.");
   }
-  const parsed = new URL(raw);
+  const parsed = new URL(candidate);
   if (isLikelyPrivateHost(parsed.hostname)) {
     throw new Error("Interne oder private Hosts sind nicht erlaubt.");
   }
