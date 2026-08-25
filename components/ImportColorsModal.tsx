@@ -9,12 +9,16 @@ import {
   type FormEvent,
 } from "react";
 
+import { apiFetch } from "@/lib/auth/apiFetch";
 import {
   formatCmyk,
   formatRgb,
+  hexToCmyk,
   hexToRgb,
   type Cmyk,
 } from "@/lib/color";
+import { storeFigmaToken } from "@/lib/figma-token";
+import { parseFigmaFileKey } from "@/lib/figmaUrl";
 import { parseCclibsFile, type CclibsColor } from "@/lib/parseCclibs";
 import { normalizeWebsiteUrl } from "@/lib/websiteUrl";
 
@@ -24,6 +28,17 @@ type ExtractedColor = {
   hex: string;
   count: number;
   sources: string[];
+};
+
+type FigmaColor = {
+  name: string;
+  hex: string;
+  count?: number;
+};
+
+type FigmaFontInfo = {
+  family: string;
+  weights: string[];
 };
 
 export type ImportTarget = "print" | "digital";
@@ -49,7 +64,7 @@ type RowState = {
   target: ImportTarget;
 };
 
-type Tab = "url" | "file";
+type Tab = "url" | "file" | "figma";
 
 function defaultNameFor(hex: string, index: number): string {
   return `Webfarbe ${index + 1} (${hex.toUpperCase()})`;
@@ -80,6 +95,26 @@ type PreparedRow = {
   count?: number;
 };
 
+function prepareFigmaRows(colors: FigmaColor[]): PreparedRow[] {
+  return colors.map((c, idx) => {
+    const rgb = hexToRgb(c.hex);
+    const parts: string[] = [c.hex.toUpperCase()];
+    if (rgb) parts.push(formatRgb(rgb));
+    if (c.count && c.count > 1) parts.push(`${c.count}x`);
+    return {
+      key: `figma-${idx}-${c.hex}`,
+      hex: c.hex,
+      label: c.hex.toUpperCase(),
+      subtitle: parts.join(" · "),
+      defaultName: c.name || defaultNameFor(c.hex, idx),
+      defaultTarget: "digital" as ImportTarget,
+      cmyk: hexToCmyk(c.hex) ?? undefined,
+      mode: "rgb" as const,
+      count: c.count,
+    };
+  });
+}
+
 function modeBadge(mode: ImportColorItem["mode"]): string {
   switch (mode) {
     case "cmyk":
@@ -108,6 +143,15 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
   const [parsingFile, setParsingFile] = useState(false);
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
   const [hideNeutrals, setHideNeutrals] = useState(false);
+  const [figmaUrl, setFigmaUrl] = useState("");
+  const [figmaResults, setFigmaResults] = useState<FigmaColor[] | null>(null);
+  const [figmaFonts, setFigmaFonts] = useState<FigmaFontInfo[]>([]);
+  const [figmaSource, setFigmaSource] = useState<"styles" | "fills" | null>(
+    null
+  );
+  const [tokenNeeded, setTokenNeeded] = useState(false);
+  const [figmaToken, setFigmaToken] = useState("");
+  const [savingToken, setSavingToken] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -124,6 +168,13 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
       setParsingFile(false);
       setRowState({});
       setHideNeutrals(false);
+      setFigmaUrl("");
+      setFigmaResults(null);
+      setFigmaFonts([]);
+      setFigmaSource(null);
+      setTokenNeeded(false);
+      setFigmaToken("");
+      setSavingToken(false);
     }
   }, [open]);
 
@@ -147,6 +198,10 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
         count: c.count,
       }));
     }
+    if (tab === "figma") {
+      if (!figmaResults) return [];
+      return prepareFigmaRows(figmaResults);
+    }
     if (!fileResults) return [];
     return fileResults.map((c, idx) => {
       const target: ImportTarget =
@@ -167,7 +222,7 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
         mode: c.mode,
       };
     });
-  }, [tab, urlResults, fileResults]);
+  }, [tab, urlResults, fileResults, figmaResults]);
 
   const filteredRows = useMemo(() => {
     if (!hideNeutrals) return rows;
@@ -182,7 +237,12 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
     [filteredRows, rowState]
   );
 
-  const hasResults = tab === "url" ? urlResults !== null : fileResults !== null;
+  const hasResults =
+    tab === "url"
+      ? urlResults !== null
+      : tab === "figma"
+        ? figmaResults !== null
+        : fileResults !== null;
 
   const seedRowState = (preparedRows: PreparedRow[]) => {
     const next: Record<string, RowState> = {};
@@ -236,6 +296,81 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const runFigmaImport = async () => {
+    if (loading || importing) return;
+    const trimmed = figmaUrl.trim();
+    if (!trimmed) {
+      setError("Bitte einen Figma-Link angeben.");
+      return;
+    }
+    if (!parseFigmaFileKey(trimmed)) {
+      setError(
+        "Kein gueltiger Figma-Link (figma.com/design/… oder figma.com/file/…)."
+      );
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setFigmaResults(null);
+    setFigmaFonts([]);
+    setFigmaSource(null);
+    try {
+      const response = await apiFetch("/api/figma/import-colors", {
+        method: "POST",
+        body: JSON.stringify({ url: trimmed }),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | {
+            colors?: FigmaColor[];
+            fonts?: FigmaFontInfo[];
+            source?: "styles" | "fills";
+            error?: string;
+            tokenMissing?: boolean;
+          }
+        | null;
+      if (!response.ok) {
+        if (data?.tokenMissing) setTokenNeeded(true);
+        throw new Error(data?.error ?? `HTTP ${response.status}`);
+      }
+      setTokenNeeded(false);
+      const colors = data?.colors ?? [];
+      setFigmaResults(colors);
+      setFigmaFonts(data?.fonts ?? []);
+      setFigmaSource(data?.source ?? null);
+      seedRowState(prepareFigmaRows(colors));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFigmaGenerate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await runFigmaImport();
+  };
+
+  const handleSaveFigmaToken = async () => {
+    const value = figmaToken.trim();
+    if (!value || savingToken) return;
+    setSavingToken(true);
+    setError(null);
+    try {
+      const stored = await storeFigmaToken(value);
+      if (!stored) {
+        setError(
+          "Token konnte nicht gespeichert werden. Bitte erneut versuchen."
+        );
+        return;
+      }
+      setFigmaToken("");
+      setTokenNeeded(false);
+      if (figmaUrl.trim()) await runFigmaImport();
+    } finally {
+      setSavingToken(false);
     }
   };
 
@@ -361,7 +496,7 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
     }
   };
 
-  const busy = loading || importing || parsingFile;
+  const busy = loading || importing || parsingFile || savingToken;
 
   return (
     <Modal
@@ -370,7 +505,7 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
         if (!busy) onClose();
       }}
       title="Farben importieren"
-      description="Farben aus einer Website-URL lesen oder eine Adobe Creative Cloud Library (.cclibs / .cclib) hochladen."
+      description="Farben aus einer Website-URL lesen, eine Adobe Creative Cloud Library (.cclibs / .cclib) hochladen oder Farb-Styles aus einer Figma-Datei importieren."
       widthClassName="max-w-2xl"
     >
       <div className="flex flex-col gap-4">
@@ -382,6 +517,7 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
           {([
             { id: "url", label: "URL" },
             { id: "file", label: "Import" },
+            { id: "figma", label: "Figma" },
           ] as const).map((t) => {
             const isActive = tab === t.id;
             return (
@@ -488,6 +624,96 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
           </div>
         )}
 
+        {tab === "figma" && (
+          <div className="flex flex-col gap-3">
+            <form
+              onSubmit={handleFigmaGenerate}
+              noValidate
+              className="flex flex-col gap-2"
+            >
+              <label className="flex flex-col gap-1 text-sm text-black/70">
+                Figma-Datei-Link
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    inputMode="url"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    value={figmaUrl}
+                    onChange={(event) => setFigmaUrl(event.target.value)}
+                    placeholder="https://www.figma.com/design/…"
+                    disabled={busy}
+                    className="w-full rounded-lg border border-black/15 px-3 py-2 text-sm text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  />
+                  <button
+                    type="submit"
+                    disabled={busy || !figmaUrl.trim()}
+                    className="shrink-0 rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loading ? "Lese …" : "Styles laden"}
+                  </button>
+                </div>
+              </label>
+              {loading && (
+                <div className="flex items-center gap-2 text-sm text-black/60">
+                  <span
+                    className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black"
+                    aria-hidden
+                  />
+                  Farb-Styles werden aus Figma geladen …
+                </div>
+              )}
+            </form>
+
+            {tokenNeeded && (
+              <div className="flex flex-col gap-2 rounded-xl border border-black/10 bg-black/[0.02] p-3">
+                <p className="text-sm font-medium text-black">
+                  Figma Personal Access Token
+                </p>
+                <p className="text-xs text-black/55">
+                  Figma → Settings → Security → Personal access tokens.
+                  Lese-Rechte genuegen. Der Token wird in den
+                  App-Einstellungen gespeichert.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={figmaToken}
+                    onChange={(event) => setFigmaToken(event.target.value)}
+                    placeholder="figd_…"
+                    disabled={savingToken}
+                    className="w-full rounded-lg border border-black/15 px-3 py-2 text-sm text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveFigmaToken}
+                    disabled={savingToken || !figmaToken.trim()}
+                    className="shrink-0 rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {savingToken ? "Speichert …" : "Token speichern"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {figmaResults !== null && figmaSource === "fills" && (
+              <p className="text-xs text-black/55">
+                Keine publizierten Farb-Styles gefunden — stattdessen wurden
+                die meistgenutzten Fuellfarben der Datei geladen.
+              </p>
+            )}
+            {figmaFonts.length > 0 && (
+              <p className="text-xs text-black/55">
+                Gefundene Schriften (nur zur Info, kein Import):{" "}
+                {figmaFonts
+                  .map((f) => `${f.family} (${f.weights.join(", ")})`)
+                  .join(" · ")}
+              </p>
+            )}
+          </div>
+        )}
+
         {error && (
           <p role="alert" className="text-sm text-red-700">
             Fehler: {error}
@@ -584,7 +810,7 @@ export default function ImportColorsModal({ open, onClose, onImport }: Props) {
                             {subtitle}
                           </span>
                         </div>
-                        {tab === "file" && (
+                        {(tab === "file" || tab === "figma") && (
                           <select
                             value={state?.target ?? row.defaultTarget}
                             onChange={(event) =>
