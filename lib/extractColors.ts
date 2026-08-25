@@ -3,8 +3,46 @@ import { clamp, rgbToHex } from "./color";
 const MAX_CSS_FILES = 20;
 const MAX_FETCH_BYTES = 2_000_000;
 const FETCH_TIMEOUT_MS = 10_000;
-const USER_AGENT =
-  "Mozilla/5.0 (compatible; BrandsystemColorExtractor/1.0; +https://brandsystem.app)";
+
+// Viele Brand-Websites (Akamai, Cloudflare, Corporate-WAFs) antworten auf
+// Bot-User-Agents mit HTTP 403. Deshalb senden wir Browser-typische Header.
+const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+const FALLBACK_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+
+export type WebsiteFetchKind = "document" | "stylesheet";
+
+export function buildWebsiteFetchHeaders(
+  kind: WebsiteFetchKind,
+  options?: { referer?: string; userAgent?: string }
+): Record<string, string> {
+  const userAgent = options?.userAgent ?? BROWSER_USER_AGENT;
+  const isWindows = /Windows NT/i.test(userAgent);
+  const headers: Record<string, string> = {
+    accept:
+      kind === "stylesheet"
+        ? "text/css,*/*;q=0.1"
+        : "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "accept-language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+    "sec-ch-ua":
+      '"Chromium";v="128", "Not(A:Brand";v="24", "Google Chrome";v="128"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": isWindows ? '"Windows"' : '"macOS"',
+    "sec-fetch-dest": kind === "stylesheet" ? "style" : "document",
+    "sec-fetch-mode": kind === "stylesheet" ? "no-cors" : "navigate",
+    "sec-fetch-site": options?.referer ? "same-origin" : "none",
+    "upgrade-insecure-requests": "1",
+    "user-agent": userAgent,
+  };
+  if (kind === "document") {
+    headers["sec-fetch-user"] = "?1";
+  }
+  if (options?.referer) {
+    headers.referer = options.referer;
+  }
+  return headers;
+}
 
 // Teilmenge der CSS-Farbnamen. Deckt gaengige Brand-Faelle ab, ohne
 // die komplette Spezifikation importieren zu muessen.
@@ -186,49 +224,101 @@ export function extractColorsFromText(
   }
 }
 
-async function fetchWithLimits(
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+async function readBodyLimited(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return await response.text();
+
+  const decoder = new TextDecoder();
+  let received = 0;
+  let result = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > MAX_FETCH_BYTES) {
+      await reader.cancel();
+      break;
+    }
+    result += decoder.decode(value, { stream: true });
+  }
+  result += decoder.decode();
+  return result;
+}
+
+async function fetchOnce(
   url: string,
-  referer?: string
-): Promise<string> {
+  headers: Record<string, string>
+): Promise<{ ok: boolean; status: number; text: string }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const headers: Record<string, string> = {
-      "user-agent": USER_AGENT,
-      accept: "text/html,text/css,*/*;q=0.8",
-      "accept-language": "en-US,en;q=0.9,de;q=0.8",
-    };
-    if (referer) headers.referer = referer;
-
     const response = await fetch(url, {
       redirect: "follow",
+      cache: "no-store",
       signal: controller.signal,
       headers,
     });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} fuer ${url}`);
-    }
-    const reader = response.body?.getReader();
-    if (!reader) return await response.text();
-
-    const decoder = new TextDecoder();
-    let received = 0;
-    let result = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      received += value.byteLength;
-      if (received > MAX_FETCH_BYTES) {
-        await reader.cancel();
-        break;
-      }
-      result += decoder.decode(value, { stream: true });
-    }
-    result += decoder.decode();
-    return result;
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: await readBodyLimited(response),
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchWithLimits(
+  url: string,
+  kind: WebsiteFetchKind = "document",
+  referer?: string
+): Promise<string> {
+  const attempts = [
+    buildWebsiteFetchHeaders(kind, { referer }),
+    buildWebsiteFetchHeaders(kind, {
+      referer,
+      userAgent: FALLBACK_USER_AGENT,
+    }),
+  ];
+
+  let lastStatus = 0;
+  for (const [index, headers] of attempts.entries()) {
+    const result = await fetchOnce(url, headers);
+    lastStatus = result.status;
+    if (result.ok) return result.text;
+    const canRetry =
+      index < attempts.length - 1 &&
+      (result.status === 401 || result.status === 403);
+    if (!canRetry) break;
+  }
+
+  throw new Error(`HTTP ${lastStatus} fuer ${hostLabel(url)}`);
+}
+
+function alternatePublicUrl(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname;
+    parsed.hostname = host.startsWith("www.") ? host.slice(4) : `www.${host}`;
+    if (isLikelyPrivateHost(parsed.hostname)) return null;
+    const next = parsed.toString();
+    return next === rawUrl ? null : next;
+  } catch {
+    return null;
+  }
+}
+
+function isForbiddenFetchError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /^HTTP (401|403) fuer /.test(error.message);
 }
 
 function resolveUrl(base: string, href: string): string | null {
@@ -279,11 +369,10 @@ export function validatePublicUrl(raw: string): string {
   return parsed.toString();
 }
 
-export async function extractColorsFromWebsite(rawUrl: string) {
-  const pageUrl = validatePublicUrl(rawUrl);
+async function extractColorsFromPage(pageUrl: string) {
   const map = new Map<string, ColorHit>();
 
-  const html = await fetchWithLimits(pageUrl);
+  const html = await fetchWithLimits(pageUrl, "document");
   extractColorsFromText(html, "html", map);
 
   // <style>-Bloecke (auch ueber rohen HTML-Pass erfasst, aber gezielt weiterreichen)
@@ -313,7 +402,7 @@ export async function extractColorsFromWebsite(rawUrl: string) {
     cssUrls.map(async (cssUrl) => {
       try {
         if (isLikelyPrivateHost(new URL(cssUrl).hostname)) return;
-        const cssText = await fetchWithLimits(cssUrl, pageUrl);
+        const cssText = await fetchWithLimits(cssUrl, "stylesheet", pageUrl);
         extractColorsFromText(cssText, cssUrl, map);
       } catch {
         // Einzelne CSS-Fehler nicht propagieren
@@ -322,6 +411,19 @@ export async function extractColorsFromWebsite(rawUrl: string) {
   );
 
   return map;
+}
+
+export async function extractColorsFromWebsite(rawUrl: string) {
+  const pageUrl = validatePublicUrl(rawUrl);
+  try {
+    return await extractColorsFromPage(pageUrl);
+  } catch (error) {
+    const alternate = alternatePublicUrl(pageUrl);
+    if (!alternate || !isForbiddenFetchError(error)) {
+      throw error;
+    }
+    return await extractColorsFromPage(alternate);
+  }
 }
 
 export type SerializedColor = {
