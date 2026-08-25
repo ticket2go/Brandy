@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import ConfirmDialog from "./ConfirmDialog";
+import FixedPortal from "./FixedPortal";
 import GethypedTokenField from "./GethypedTokenField";
 import ScraperCard from "./ScraperCard";
 import { emptyIngest, ingestToGethyped } from "@/lib/gethyped-ingest";
@@ -335,22 +336,24 @@ export default function ScraperManager() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setFormOpen(true)}
-        aria-label="Neuen Scraper anlegen"
-        title="Neuen Scraper anlegen"
-        className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
-      >
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path
-            d="M10 4v12M4 10h12"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-          />
-        </svg>
-      </button>
+      <FixedPortal>
+        <button
+          type="button"
+          onClick={() => setFormOpen(true)}
+          aria-label="Neuen Scraper anlegen"
+          title="Neuen Scraper anlegen"
+          className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path
+              d="M10 4v12M4 10h12"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      </FixedPortal>
 
       <section className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6">
         <GethypedTokenField />

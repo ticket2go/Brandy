@@ -1,4 +1,3 @@
-import NavCard from "@/components/NavCard";
 import RegisterForm from "@/components/RegisterForm";
 
 export const dynamic = "force-dynamic";
@@ -6,7 +5,6 @@ export const dynamic = "force-dynamic";
 export default function RegisterPage() {
   return (
     <main className="relative flex min-h-screen w-full flex-col items-start justify-start gap-8 py-16">
-      <NavCard />
       <section className="mx-auto w-full max-w-md px-6">
         <h1 className="text-4xl font-bold tracking-tight text-black">
           Registrieren

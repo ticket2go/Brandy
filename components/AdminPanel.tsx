@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/auth/apiFetch";
 import { useSession } from "./SessionProvider";
+import FixedPortal from "./FixedPortal";
 import ManagerTagInput from "./ManagerTagInput";
 
 const ORG_BUCKET = "org-assets";
@@ -137,31 +138,33 @@ export default function AdminPanel() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => {
-          setError(null);
-          setCreateOpen(true);
-        }}
-        aria-label="Neue Organisation anlegen"
-        title="Neue Organisation anlegen"
-        className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
-      >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 20 20"
-          fill="none"
-          aria-hidden="true"
+      <FixedPortal>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setCreateOpen(true);
+          }}
+          aria-label="Neue Organisation anlegen"
+          title="Neue Organisation anlegen"
+          className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
         >
-          <path
-            d="M10 4v12M4 10h12"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-          />
-        </svg>
-      </button>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 20 20"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M10 4v12M4 10h12"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      </FixedPortal>
 
       <section className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6">
         <header className="flex flex-col gap-2">
