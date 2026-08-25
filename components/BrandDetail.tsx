@@ -1041,37 +1041,43 @@ export default function BrandDetail({ slug }: BrandDetailProps) {
       </div>
 
       <div role="tabpanel" className="min-h-[300px]">
-        <TabFade tabKey={activeTab}>
-          {activeTab === "logokit" && (
-            <LogokitPanel
-              brandId={brand.id}
-              brandSlug={brand.slug}
-              brandName={brand.name}
-            />
-          )}
-          {activeTab === "farben" && (
-            <ColorsPanel brandId={brand.id} brandName={brand.name} />
-          )}
-          {activeTab === "typografie" && (
-            <TypographyPanel brandId={brand.id} brandSlug={brand.slug} />
-          )}
-          {activeTab === "elemente" && <PlaceholderPanel title="Elemente" />}
-          {activeTab === "digital" && <PlaceholderPanel title="Digital" />}
-          {activeTab === "praesentation" && (
-            <PlaceholderPanel title="Präsentation" />
-          )}
-          {activeTab === "lokal" && (
-            <LokalPanel
-              brandId={brand.id}
-              onCountChange={(count) => {
-                const has = count > 0;
-                setTabContent((prev) =>
-                  prev.lokal === has ? prev : { ...prev, lokal: has }
-                );
-              }}
-            />
-          )}
-        </TabFade>
+        <KeepTab active={activeTab === "logokit"}>
+          <LogokitPanel
+            brandId={brand.id}
+            brandSlug={brand.slug}
+            brandName={brand.name}
+          />
+        </KeepTab>
+        <KeepTab active={activeTab === "farben"}>
+          <ColorsPanel
+            brandId={brand.id}
+            brandName={brand.name}
+            active={activeTab === "farben"}
+          />
+        </KeepTab>
+        <KeepTab active={activeTab === "typografie"}>
+          <TypographyPanel brandId={brand.id} brandSlug={brand.slug} />
+        </KeepTab>
+        <KeepTab active={activeTab === "elemente"}>
+          <PlaceholderPanel title="Elemente" />
+        </KeepTab>
+        <KeepTab active={activeTab === "digital"}>
+          <PlaceholderPanel title="Digital" />
+        </KeepTab>
+        <KeepTab active={activeTab === "praesentation"}>
+          <PlaceholderPanel title="Präsentation" />
+        </KeepTab>
+        <KeepTab active={activeTab === "lokal"}>
+          <LokalPanel
+            brandId={brand.id}
+            onCountChange={(count) => {
+              const has = count > 0;
+              setTabContent((prev) =>
+                prev.lokal === has ? prev : { ...prev, lokal: has }
+              );
+            }}
+          />
+        </KeepTab>
       </div>
 
       <IdmlExportModal
@@ -1097,39 +1103,21 @@ function PlaceholderPanel({ title }: { title: string }) {
   );
 }
 
-function TabFade({
-  tabKey,
+/** Einmal gemountet bleibt das Panel stehen – kein Remount/Fade-Zucken beim Tabwechsel. */
+function KeepTab({
+  active,
   children,
 }: {
-  tabKey: string;
+  active: boolean;
   children: React.ReactNode;
 }) {
-  const [visibleKey, setVisibleKey] = useState(tabKey);
-  const [displayed, setDisplayed] = useState(children);
-  const [fading, setFading] = useState(false);
+  const [mounted, setMounted] = useState(active);
 
   useEffect(() => {
-    if (tabKey === visibleKey) {
-      setDisplayed(children);
-      return;
-    }
-    setFading(true);
-    const timeout = window.setTimeout(() => {
-      setDisplayed(children);
-      setVisibleKey(tabKey);
-      setFading(false);
-    }, 180);
-    return () => window.clearTimeout(timeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabKey, children]);
+    if (active) setMounted(true);
+  }, [active]);
 
-  return (
-    <div
-      key={visibleKey}
-      className="transition-opacity duration-300 ease-out"
-      style={{ opacity: fading ? 0 : 1 }}
-    >
-      {displayed}
-    </div>
-  );
+  if (!mounted) return null;
+
+  return <div hidden={!active}>{children}</div>;
 }

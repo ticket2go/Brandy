@@ -15,6 +15,7 @@ import {
 
 import AddCategoryDialog from "./AddCategoryDialog";
 import AddColorSwatch from "./AddColorSwatch";
+import FixedPortal from "./FixedPortal";
 import ColorEditorModal, {
   type ColorEditorInitial,
   type ColorEditorSubmit,
@@ -56,6 +57,7 @@ type ColorValue = {
 type ColorsPanelProps = {
   brandId: string;
   brandName: string;
+  active?: boolean;
 };
 
 function formatRgb(hex: string): string {
@@ -78,7 +80,11 @@ function defaultValueFor(category: Category, color: Color): string {
   return color.hex.toUpperCase();
 }
 
-export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
+export default function ColorsPanel({
+  brandId,
+  brandName,
+  active = true,
+}: ColorsPanelProps) {
   const [hoveredColor, setHoveredColor] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [colors, setColors] = useState<Color[]>([]);
@@ -201,6 +207,10 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
   }, [load]);
 
   useVisibilityReload(load);
+
+  useEffect(() => {
+    if (!active) setHoveredColor(null);
+  }, [active]);
 
   useEffect(() => {
     let cancelled = false;
@@ -701,18 +711,29 @@ export default function ColorsPanel({ brandId, brandName }: ColorsPanelProps) {
 
   return (
     <>
-      <div
-        ref={overlayRef}
-        aria-hidden
-        className="pointer-events-none fixed inset-0 z-30 opacity-0"
-        style={{
-          backgroundColor: hoveredColor ? `${hoveredColor}CC` : "transparent",
-          backdropFilter: "blur(14px) saturate(1.1)",
-          WebkitBackdropFilter: "blur(14px) saturate(1.1)",
-          transition:
-            "background-color 500ms ease, backdrop-filter 500ms ease",
-        }}
-      />
+      {active && (
+        <FixedPortal>
+          <div
+            ref={overlayRef}
+            aria-hidden
+            className="pointer-events-none fixed inset-0 z-30"
+            style={{
+              opacity: 0,
+              backgroundColor: hoveredColor
+                ? `${hoveredColor}CC`
+                : "transparent",
+              backdropFilter: hoveredColor
+                ? "blur(14px) saturate(1.1)"
+                : undefined,
+              WebkitBackdropFilter: hoveredColor
+                ? "blur(14px) saturate(1.1)"
+                : undefined,
+              transition:
+                "background-color 500ms ease, backdrop-filter 500ms ease",
+            }}
+          />
+        </FixedPortal>
+      )}
 
       <div className="relative z-40 flex flex-col gap-10">
         {error && (

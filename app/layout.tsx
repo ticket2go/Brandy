@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Epilogue } from "next/font/google";
 
+import AppChrome from "@/components/AppChrome";
 import { SessionProvider } from "@/components/SessionProvider";
 
 import "./globals.css";
@@ -25,7 +26,10 @@ export default function RootLayout({
   return (
     <html lang="de" className={epilogue.variable}>
       <body className="font-sans">
-        <SessionProvider>{children}</SessionProvider>
+        <SessionProvider>
+          <AppChrome />
+          {children}
+        </SessionProvider>
       </body>
     </html>
   );

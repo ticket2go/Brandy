@@ -14,6 +14,7 @@ import { slugify } from "@/lib/slugify";
 
 import BrandCard from "./BrandCard";
 import ConfirmDialog from "./ConfirmDialog";
+import FixedPortal from "./FixedPortal";
 import { useSession } from "./SessionProvider";
 
 type Brand = {
@@ -340,28 +341,30 @@ export default function BrandManager() {
   return (
     <>
       {canCreate && (
-        <button
-          type="button"
-          onClick={() => setFormOpen(true)}
-          aria-label="Neue Brand anlegen"
-          title="Neue Brand anlegen"
-          className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
-        >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 20 20"
-            fill="none"
-            aria-hidden="true"
+        <FixedPortal>
+          <button
+            type="button"
+            onClick={() => setFormOpen(true)}
+            aria-label="Neue Brand anlegen"
+            title="Neue Brand anlegen"
+            className="fixed left-6 top-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white shadow-sm transition hover:scale-105 hover:bg-black/85"
           >
-            <path
-              d="M10 4v12M4 10h12"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M10 4v12M4 10h12"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        </FixedPortal>
       )}
 
       <section
@@ -438,81 +441,83 @@ export default function BrandManager() {
       </section>
 
       {formOpen && (
-        <div
-          ref={overlayRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Neue Brand anlegen"
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6"
-          style={{
-            backdropFilter: "blur(24px)",
-            WebkitBackdropFilter: "blur(24px)",
-          }}
-          onClick={() => closeForm()}
-        >
+        <FixedPortal>
           <div
-            ref={panelRef}
-            className="w-full max-w-5xl"
-            onClick={(e) => e.stopPropagation()}
+            ref={overlayRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Neue Brand anlegen"
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6"
+            style={{
+              backdropFilter: "blur(24px)",
+              WebkitBackdropFilter: "blur(24px)",
+            }}
+            onClick={() => closeForm()}
           >
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <label htmlFor="brand-name-overlay" className="sr-only">
-                Brandname
-              </label>
-              <div className="flex items-end gap-6 border-b-2 border-white/70 px-2 pb-4">
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <input
-                    ref={inputRef}
-                    id="brand-name-overlay"
-                    type="text"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Brandname …"
-                    disabled={saving}
-                    autoComplete="off"
-                    className="min-w-0 flex-1 border-0 bg-transparent font-semibold tracking-tight text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
-                    style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
-                  />
-                  <input
-                    type="text"
-                    value={legalName}
-                    onChange={(event) => setLegalName(event.target.value)}
-                    placeholder="Firmierung (optional, z.B. Max Mustermann GmbH)"
-                    disabled={saving}
-                    autoComplete="off"
-                    className="min-w-0 border-0 bg-transparent text-base text-white/70 placeholder:text-white/30 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
-                  />
+            <div
+              ref={panelRef}
+              className="w-full max-w-5xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                <label htmlFor="brand-name-overlay" className="sr-only">
+                  Brandname
+                </label>
+                <div className="flex items-end gap-6 border-b-2 border-white/70 px-2 pb-4">
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <input
+                      ref={inputRef}
+                      id="brand-name-overlay"
+                      type="text"
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder="Brandname …"
+                      disabled={saving}
+                      autoComplete="off"
+                      className="min-w-0 flex-1 border-0 bg-transparent font-semibold tracking-tight text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
+                      style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}
+                    />
+                    <input
+                      type="text"
+                      value={legalName}
+                      onChange={(event) => setLegalName(event.target.value)}
+                      placeholder="Firmierung (optional, z.B. Max Mustermann GmbH)"
+                      disabled={saving}
+                      autoComplete="off"
+                      className="min-w-0 border-0 bg-transparent text-base text-white/70 placeholder:text-white/30 outline-none focus:outline-none focus:ring-0 disabled:opacity-60"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!canSave}
+                    className="mb-2 shrink-0 rounded-full bg-white px-8 py-4 text-lg font-semibold text-black transition enabled:hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {saving ? "Speichert …" : "Anlegen"}
+                  </button>
                 </div>
-                <button
-                  type="submit"
-                  disabled={!canSave}
-                  className="mb-2 shrink-0 rounded-full bg-white px-8 py-4 text-lg font-semibold text-black transition enabled:hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {saving ? "Speichert …" : "Anlegen"}
-                </button>
-              </div>
-              {activeOrg ? (
-                <p className="px-2 text-xs text-white/60">
-                  Brand wird in <strong className="text-white">B. {activeOrg.name}</strong>{" "}
-                  angelegt.
-                </p>
-              ) : !user ? (
-                <p className="px-2 text-xs text-white/60">
-                  Du bist nicht eingeloggt – die Brand wird ohne Organisation
-                  gespeichert.
-                </p>
-              ) : null}
-              {error && (
-                <p
-                  role="alert"
-                  className="rounded-xl bg-red-500/20 px-4 py-3 text-sm text-red-100"
-                >
-                  Fehler: {error}
-                </p>
-              )}
-            </form>
+                {activeOrg ? (
+                  <p className="px-2 text-xs text-white/60">
+                    Brand wird in <strong className="text-white">B. {activeOrg.name}</strong>{" "}
+                    angelegt.
+                  </p>
+                ) : !user ? (
+                  <p className="px-2 text-xs text-white/60">
+                    Du bist nicht eingeloggt – die Brand wird ohne Organisation
+                    gespeichert.
+                  </p>
+                ) : null}
+                {error && (
+                  <p
+                    role="alert"
+                    className="rounded-xl bg-red-500/20 px-4 py-3 text-sm text-red-100"
+                  >
+                    Fehler: {error}
+                  </p>
+                )}
+              </form>
+            </div>
           </div>
-        </div>
+        </FixedPortal>
       )}
 
       <ConfirmDialog
